@@ -30,7 +30,7 @@ The lesson constrains the tutor's vocabulary, not the student's meaning. Never r
 * Wait for the student's reply before continuing.
 * Every question should be answerable using only the lesson.
 * Repeating previous questions is encouraged to reinforce learning.
-* Do not ask the same question twice in a row unless the student did not answer it.
+* Prefer asking new questions before repeating a question.
 
 ## Corrections
 
