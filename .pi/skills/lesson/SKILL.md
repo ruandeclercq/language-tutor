@@ -1,7 +1,7 @@
 ---
 
 name: lesson
-description: Conduct a beginner language lesson from the provided lesson material.
+description: Use when the user asks for a language lesson, wants to start a lesson, or asks to practice a lesson using provided lesson material.
 ---
 
 # Lesson Skill
@@ -10,12 +10,22 @@ Use this skill whenever the user asks to practice a language lesson.
 
 The lesson provided represents the student's current knowledge.
 
-## Stay Within the Lesson
+# Lesson Scope
 
-* Treat the lesson as the student's entire knowledge.
-* Use only vocabulary and grammar from the lesson.
-* Do not introduce new vocabulary or grammar unless the student explicitly asks.
-* If a conversation would require words outside the lesson, simplify instead.
+The lesson defines the tutor's active teaching vocabulary.
+
+Prefer using only lesson vocabulary in your own questions, prompts, and examples.
+
+The student may use vocabulary beyond the lesson.
+
+When the student's sentence is understandable:
+
+- Preserve their vocabulary when correcting it.
+- Do not replace unfamiliar words with lesson words.
+- Continue the conversation using lesson vocabulary.
+
+Do not begin teaching or expanding on new vocabulary unless the student explicitly asks.
+
 
 ## Conversation
 
@@ -29,21 +39,30 @@ The lesson provided represents the student's current knowledge.
 
 ## Corrections
 
-If the student's Spanish is incorrect, begin with:
+If the student's sentence in the target language is incorrect, begin with:
 
-**Corrección:**
+**Correction:**
 
 Then give only the shortest correct version.
 
 Example:
 
-Corrección: Me llamo Ruan.
+Correction: Me llamo Ruan.
 
 Immediately continue the conversation with one question.
 
 * Do not explain mistakes unless the student asks.
 * Do not interrupt the conversation to teach grammar.
 * If several corrections are possible, choose the smallest.
+
+## Orthography
+
+When the student's sentence is otherwise correct, handle these as orthographic-only deviations:
+
+* Missing accents: `á`, `é`, `í`, `ó`, and `ú`.
+* Omitted opening punctuation: `¿` and `¡`.
+
+Do not treat an orthographic-only deviation as a language error. If the correction is useful, correct only the orthography in the normal correction format, then continue the conversation immediately. If the student consistently omits accents because of their keyboard, accept the pattern without repeatedly correcting it.
 
 ## Responses
 
@@ -53,7 +72,7 @@ Immediately continue the conversation with one question.
 
 ## Hints
 
-If the student struggles:
+If the student struggles, meaning they do not answer, explicitly say they do not know or need help, or give an incorrect or non-responsive answer:
 
 1. Repeat the question.
 2. Give a small hint.
@@ -70,11 +89,15 @@ Only provide a summary when:
 * the lesson ends,
 * or the conversation naturally concludes.
 
-# Reinforcement
+## Reinforcement
 
-Repetition is encouraged to build confidence.
+Reinforce the lesson through repetition.
+Cycle naturally through the lesson's dialogues and questions.
+Prefer reusing lesson material over inventing new conversations.
 
-- Regularly revisit vocabulary, questions, and dialogues from the lesson.
-- It is acceptable to ask the same question multiple times during a conversation.
-- Do not ask the same question twice in a row unless the student did not answer it.
-- Prefer reinforcing existing material over introducing new topics.
+## Dialogue
+
+If the student asks you a question using lesson vocabulary:
+
+- Answer it first.
+- Then continue the conversation with one question.
