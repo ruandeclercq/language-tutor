@@ -23,6 +23,13 @@ if (!Number.isSafeInteger(allowedUserId) || allowedUserId <= 0) {
 
 const bot = new Telegraf(token);
 
+const log = (actor: string, message: string) => {
+  console.log(`[${new Date().toISOString()}] [${actor}] ${message}`);
+};
+
+const userLabel = (ctx: { from?: { username?: string; id: number } }) =>
+  `@${ctx.from?.username ?? "unknown"} (id:${ctx.from?.id ?? "unknown"})`;
+
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
 const createSession = () =>
@@ -60,11 +67,16 @@ const promptPi = (prompt: string): Promise<string> => {
         return;
       }
 
-      responseText = response.content
-        .filter((part): part is { type: "text"; text: string } => part.type === "text")
-        .map((part) => part.text)
-        .join("")
-        .trim();
+      for (const part of response.content) {
+        if (part.type === "thinking") {
+          log("pi", `<thinking>${part.thinking}</thinking>`);
+        } else if (part.type === "text") {
+          responseText += part.text;
+        }
+      }
+
+      responseText = responseText.trim();
+      log("pi", responseText);
     });
 
     session.prompt(prompt)
@@ -91,15 +103,23 @@ await bot.telegram.setMyCommands([
 ]);
 
 bot.start(async (ctx) => {
+  log(userLabel(ctx), "/start");
   await resetSession();
   await ctx.reply("Started a fresh Pi session.");
 });
-bot.help((ctx) => ctx.reply("How can I help?"));
+bot.help((ctx) => {
+  log(userLabel(ctx), "/help");
+  return ctx.reply("How can I help?");
+});
 
 bot.on(message("text"), async (ctx) => {
+  log(userLabel(ctx), ctx.message.text);
+
   const prompt = pendingPrompt.then(async () => {
     const response = await promptPi(ctx.message.text);
-    await ctx.reply(response || "Pi returned no text response.");
+    const reply = response || "Pi returned no text response.";
+    log("telegram", reply);
+    await ctx.reply(reply);
   });
 
   pendingPrompt = prompt.catch((error) => {
