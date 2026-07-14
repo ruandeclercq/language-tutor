@@ -25,18 +25,32 @@ const bot = new Telegraf(token);
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
-const { session } = await createAgentSession({
-  cwd,
-  sessionManager: SessionManager.inMemory(cwd),
-  authStorage,
-  modelRegistry,
-});
+const createSession = () =>
+  createAgentSession({
+    cwd,
+    sessionManager: SessionManager.inMemory(cwd),
+    authStorage,
+    modelRegistry,
+  }).then(({ session }) => session);
+
+let session = await createSession();
+
+async function resetSession() {
+  await pendingPrompt;
+
+  if (session.isStreaming) {
+    await session.abort();
+  }
+
+  session.dispose();
+  session = await createSession();
+}
 
 const promptPi = (prompt: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     let responseText = "";
 
-    session.subscribe((event) => {
+    const unsubscribe = session.subscribe((event) => {
       if (event.type !== "agent_end") {
         return;
       }
@@ -53,7 +67,10 @@ const promptPi = (prompt: string): Promise<string> => {
         .trim();
     });
 
-    session.prompt(prompt).then(() => resolve(responseText)).catch(reject);
+    session.prompt(prompt)
+      .then(() => resolve(responseText))
+      .catch(reject)
+      .finally(unsubscribe);
   });
 };
 
@@ -73,7 +90,10 @@ await bot.telegram.setMyCommands([
   { command: "help", description: "Show help" },
 ]);
 
-bot.start((ctx) => ctx.reply("Connected to your Pi instance."));
+bot.start(async (ctx) => {
+  await resetSession();
+  await ctx.reply("Started a fresh Pi session.");
+});
 bot.help((ctx) => ctx.reply("How can I help?"));
 
 bot.on(message("text"), async (ctx) => {
