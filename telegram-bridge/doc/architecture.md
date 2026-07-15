@@ -66,10 +66,12 @@ callbacks themselves do not execute in parallel.
 
 Each approved user has independent request state and a Pi session. A user's
 `processing` flag rejects a second text message, `/start`, `/lesson`, or lesson
-button callback from that user with a busy response. Users do not block one
-another, subject to a global limit of 10 active Pi-backed requests. The 11th
-request receives a service-busy response immediately and is not queued. Typing
-indicators run on per-request timers and are cleared when the request settles.
+button callback from that user with a busy response. It also serializes
+`/start` session resets, without consuming a global Pi request slot. Users do
+not block one another, subject to a global limit of 10 active Pi-backed
+requests. The 11th request receives a service-busy response immediately and is
+not queued. Typing indicators run on per-request timers and are cleared when
+the request settles.
 
 There is no global request queue. Opening the `/lesson` menu does not consume
 global request capacity. State changes can interleave at `await` points, so
@@ -108,7 +110,8 @@ Every update passes through the authorization middleware:
    fails closed.
 4. `/register` is handled before the normal authorization check.
 5. A pending registration accepts one non-command text message, sanitizes it,
-   appends a JSONL record, and expires after ten minutes.
+   appends a JSONL record, and expires after ten minutes. Expired registrations
+   are removed by the 24-hour idle cleanup even if the user never returns.
 6. Unapproved users receive the private-access message and never reach Pi.
 7. Approved users continue to the command or message handler.
 
@@ -141,16 +144,20 @@ type UserState = {
   the user loses allowlist access.
 
 Different users can create sessions and process requests concurrently. A
-single user has at most one active request. `/start` is rejected while that
-user is processing; otherwise it aborts a streaming session if necessary,
-disposes it, and creates a fresh session.
+single user has at most one active request or session reset. `/start` is
+rejected while that user is processing; otherwise it marks the user busy,
+aborts a streaming session if necessary, disposes it, and creates a fresh
+session. The reset is not a Pi-backed request and does not use global capacity.
 
 ## Pi interaction
 
 `promptPi(session, prompt)` subscribes to the supplied user's Pi session,
 starts one prompt, and collects text from the final assistant message. The
 subscription is removed when the prompt settles. Pi request lifecycle events
-are logged with user and request IDs, but message text and responses are not.
+are logged with user and request IDs. By default they omit message text and
+responses. Setting `TELEGRAM_DEBUG_LOG_CONTENT=1` adds bounded, 500-character
+prompt and response previews for temporary debugging and should be treated as
+sensitive logging.
 
 Text messages and lesson selections follow the same lifecycle:
 
@@ -195,7 +202,13 @@ receive only the read-only `read`, `grep`, `find`, and `ls` tools.
   prompts are released after success and failure.
 - There is currently no request timeout or rate limiter.
 - In-memory state and Pi sessions are lost on restart.
+- Every Pi-backed request that logs `started` logs exactly one terminal
+  `succeeded` or `failed` event, including placeholder-send failures.
 - Pi-backed requests emit JSON lifecycle logs with `userId`, `requestId`, and
-  outcome. Message text, Pi responses, and registration names are not logged.
+  outcome. Message text, Pi responses, and registration names are omitted by
+  default; `TELEGRAM_DEBUG_LOG_CONTENT=1` adds bounded prompt/response previews.
+- Cached per-chat command-menu configuration is retained for 24 hours of
+  inactivity, then removed with expired registration prompts during idle
+  cleanup. A later update configures that chat's menu again.
 
 Update this document whenever the runtime architecture changes.

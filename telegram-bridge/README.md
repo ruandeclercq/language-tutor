@@ -29,15 +29,16 @@ The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` is
 loaded from this local `.env` file unless it is already provided by the
 process environment. Keep the token secret and do not commit `.env`.
 
-To temporarily include prompt and response previews in request logs, add this
-to `.env` and restart the bridge:
+To temporarily include bounded prompt and response previews in Pi request
+lifecycle logs, add this to `.env` and restart the bridge:
 
 ```env
 TELEGRAM_DEBUG_LOG_CONTENT=1
 ```
 
-This mode is off by default. It logs up to 500 characters of each prompt and
-response, so enable it only while debugging and remove the setting afterward.
+This sensitive, debug-only mode is off by default. It logs up to 500 characters
+of each prompt and response, so enable it only while debugging and remove the
+setting afterward.
 
 The active allowlist is `data/allowed-users.json`. Its modification timestamp
 is checked for every incoming update, and the JSON is reparsed only when that
@@ -96,7 +97,8 @@ access, delete the record; the next update is denied.
 Unapproved private users receive the private-access message. They can send
 `/register`, then provide a name within 10 minutes. The sanitized request is
 appended to `data/access-requests.jsonl` for manual review. Registration does
-not approve the user automatically.
+not approve the user automatically. Expired registration prompts and cached
+per-chat command-menu state are removed during the 24-hour idle cleanup.
 
 ## Telegram commands
 
@@ -116,13 +118,14 @@ user also sends the welcome message.
 While Pi is processing a request, the bridge sends a placeholder and refreshes
 Telegram's typing indicator every four seconds. Each user can have at most one
 active Pi-backed request; a second text message, `/start`, `/lesson`, or lesson
-button callback receives a busy response. Across all users, at most 10
-Pi-backed requests run concurrently. An 11th request is immediately rejected
-with a service-busy response rather than queued. On success, the placeholder is
-edited with Pi's response; on failure, it is edited with a user-facing error.
-Request capacity, processing state, typing intervals, and pending prompts are
-released after both success and failure. Empty Pi responses get a fallback
-message.
+button callback receives a busy response. A session reset triggered by `/start`
+uses the same per-user busy guard but does not consume a global Pi request slot.
+Across all users, at most 10 Pi-backed requests run concurrently. An 11th
+request is immediately rejected with a service-busy response rather than
+queued. On success, the placeholder is edited with Pi's response; on failure,
+it is edited with a user-facing error. Request capacity, processing state,
+typing intervals, and pending prompts are released after both success and
+failure. Empty Pi responses get a fallback message.
 
 Opening the `/lesson` menu itself does not consume global request capacity.
 Lesson buttons use the same request path and start Pi with a prompt referring

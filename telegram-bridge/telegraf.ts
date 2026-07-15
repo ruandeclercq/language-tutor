@@ -57,6 +57,7 @@ export function createBridgeBot(options: BridgeOptions) {
   const privateAccessMessage =
     "This bot is private. Access requests are reviewed manually. Use /register to request access.";
   const registrationExpiryMs = 10 * 60 * 1000;
+  const bookkeepingRetentionMs = idleSessionMs;
   const pendingRegistrations = new Map<number, number>();
   const maxActivePiRequests = 10;
   let activePiRequests = 0;
@@ -187,6 +188,16 @@ export function createBridgeBot(options: BridgeOptions) {
         disposeUserState(userId, state);
       }
     }
+    for (const [userId, pendingUntil] of pendingRegistrations) {
+      if (pendingUntil <= now()) {
+        pendingRegistrations.delete(userId);
+      }
+    }
+    for (const [userId, configuration] of configuredCommandMenus) {
+      if (configuration.lastActivityAt <= now() - bookkeepingRetentionMs) {
+        configuredCommandMenus.delete(userId);
+      }
+    }
   }
 
   const cleanupInterval = setInterval(cleanupIdleUsers, idleSessionMs);
@@ -215,6 +226,14 @@ export function createBridgeBot(options: BridgeOptions) {
     }
   }
 
+  function releaseSessionReset(userId: number, state: UserState) {
+    state.processing = false;
+    state.pendingPrompt = Promise.resolve();
+    if (state.discardWhenIdle) {
+      disposeUserState(userId, state);
+    }
+  }
+
   async function getSession(state: UserState): Promise<PiSession> {
     if (!state.session) {
       state.session = await sessionFactory(readOnlyPiTools);
@@ -223,8 +242,6 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   async function resetSession(userId: number, state: UserState) {
-    await state.pendingPrompt;
-
     const previousSession = state.session;
     state.session = undefined;
 
@@ -239,6 +256,14 @@ export function createBridgeBot(options: BridgeOptions) {
     } else {
       replacementSession.dispose();
     }
+  }
+
+  async function resetUserSession(userId: number, state: UserState) {
+    state.processing = true;
+    state.pendingPrompt = resetSession(userId, state).finally(() => {
+      releaseSessionReset(userId, state);
+    });
+    await state.pendingPrompt;
   }
 
   const promptPi = (session: PiSession, prompt: string): Promise<string> => {
@@ -335,7 +360,7 @@ export function createBridgeBot(options: BridgeOptions) {
       if (approved) {
         await ctx.reply("You already have access.");
       } else {
-        pendingRegistrations.set(ctx.from.id, Date.now() + registrationExpiryMs);
+        pendingRegistrations.set(ctx.from.id, now() + registrationExpiryMs);
         await ctx.reply("What is your name?");
       }
       return;
@@ -343,7 +368,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
     const pendingUntil = pendingRegistrations.get(ctx.from.id);
     if (pendingUntil !== undefined) {
-      if (pendingUntil <= Date.now()) {
+      if (pendingUntil <= now()) {
         pendingRegistrations.delete(ctx.from.id);
       } else if (typeof text === "string" && !text.trim().startsWith("/")) {
         const name = sanitizeName(text);
@@ -380,17 +405,19 @@ export function createBridgeBot(options: BridgeOptions) {
     { command: "lesson", description: "Browse lessons" },
     ...publicCommands,
   ];
-  const configuredCommandMenus = new Map<number, boolean>();
+  const configuredCommandMenus = new Map<number, { approved: boolean; lastActivityAt: number }>();
 
   async function configureCommandMenu(userId: number, approved: boolean) {
-    if (configuredCommandMenus.get(userId) === approved) {
+    const configuration = configuredCommandMenus.get(userId);
+    if (configuration?.approved === approved) {
+      configuration.lastActivityAt = now();
       return;
     }
     await bot.telegram.setMyCommands(
       approved ? approvedCommands : publicCommands,
       { scope: { type: "chat", chat_id: userId } },
     );
-    configuredCommandMenus.set(userId, approved);
+    configuredCommandMenus.set(userId, { approved, lastActivityAt: now() });
   }
 
   bot.start(async (ctx) => {
@@ -401,7 +428,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     try {
-      await resetSession(ctx.from.id, state);
+      await resetUserSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
     } catch {
@@ -473,6 +500,7 @@ export function createBridgeBot(options: BridgeOptions) {
     try {
       placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
     } catch (error) {
+      logRequest(ctx.from.id, requestId, "failed");
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
@@ -533,6 +561,7 @@ export function createBridgeBot(options: BridgeOptions) {
     try {
       placeholder = await ctx.reply("🤔 Thinking...");
     } catch (error) {
+      logRequest(ctx.from.id, requestId, "failed");
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
@@ -568,7 +597,14 @@ export function createBridgeBot(options: BridgeOptions) {
 
   });
 
-  return { bot, userStates, cleanupIdleUsers, getActivePiRequests: () => activePiRequests };
+  return {
+    bot,
+    userStates,
+    cleanupIdleUsers,
+    configuredCommandMenus,
+    pendingRegistrations,
+    getActivePiRequests: () => activePiRequests,
+  };
 }
 
 const token = process.env.TELEGRAM_BOT_TOKEN;

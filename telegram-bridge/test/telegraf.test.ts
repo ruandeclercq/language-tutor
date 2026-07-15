@@ -368,6 +368,39 @@ test("start disposes the previous session and creates a fresh one", async () => 
   assert.equal(disposed, 1);
 });
 
+test("overlapping starts serialize session resets without using Pi capacity", async () => {
+  const created = deferred();
+  let sessions = 0;
+  const { bot, calls, getActivePiRequests } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [],
+    createPiSession: async () => {
+      sessions += 1;
+      await created.promise;
+      return session();
+    },
+  });
+
+  const firstStart = messageUpdate(1, "/start");
+  (firstStart.message as any).entities = [{ offset: 0, length: 6, type: "bot_command" }];
+  const first = bot.handleUpdate(firstStart as any);
+  await tick();
+  const secondStart = messageUpdate(1, "/start");
+  secondStart.update_id = 2;
+  secondStart.message.message_id = 2;
+  (secondStart.message as any).entities = [{ offset: 0, length: 6, type: "bot_command" }];
+  await bot.handleUpdate(secondStart as any);
+
+  assert.equal(getActivePiRequests(), 0);
+  assert.equal(sessions, 1);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("still working on your previous request")));
+  created.resolve();
+  await first;
+  assert.equal(sessions, 1);
+});
+
 test("the eleventh concurrent request is rejected and all successful requests release capacity", async () => {
   const finish = deferred();
   const { bot, userStates, calls, getActivePiRequests } = testBot({
@@ -413,6 +446,61 @@ for (const [name, createPiSession, failEdit] of [
     assert.equal(bridge.getActivePiRequests(), 0);
   });
 }
+
+test("placeholder failures emit a failed terminal lifecycle entry", async () => {
+  const entries: string[] = [];
+  const originalInfo = console.info;
+  console.info = (entry: string) => { entries.push(entry); };
+  try {
+    const bridge = testBot({
+      token: "test-token",
+      loadAllowedUsers: async () => approvedUser(1),
+      getLessons: async () => [],
+      createPiSession: async () => session(),
+    });
+    bridge.userStates.set(1, {
+      processing: false,
+      pendingPrompt: Promise.resolve(),
+      welcomed: true,
+      lastActivityAt: Date.now(),
+    });
+    const callApi = (bridge.bot.telegram as any).callApi;
+    bridge.bot.catch(() => {});
+    (bridge.bot.telegram as any).callApi = async (method: string, payload: any) => {
+      if (method === "sendMessage") throw new Error("send failed");
+      return callApi(method, payload);
+    };
+
+    await bridge.bot.handleUpdate(messageUpdate(1, "hola") as any);
+    const lifecycle = entries.map((entry) => JSON.parse(entry));
+    assert.deepEqual(lifecycle.map(({ outcome }) => outcome), ["started", "failed"]);
+    assert.equal(lifecycle[0].requestId, lifecycle[1].requestId);
+    assert.equal(bridge.getActivePiRequests(), 0);
+    assert.equal(bridge.userStates.get(1)?.processing, false);
+  } finally {
+    console.info = originalInfo;
+  }
+});
+
+test("cleanup removes expired registration and command-menu bookkeeping", async () => {
+  let now = 0;
+  const { bot, cleanupIdleUsers, configuredCommandMenus, pendingRegistrations } = testBot({
+    token: "test-token",
+    now: () => now,
+    loadAllowedUsers: async () => new Map(),
+    getLessons: async () => [],
+    createPiSession: async () => session(),
+  });
+
+  await bot.handleUpdate(messageUpdate(9, "/register") as any);
+  assert.equal(pendingRegistrations.size, 1);
+  assert.equal(configuredCommandMenus.size, 1);
+  now = 24 * 60 * 60 * 1000;
+  cleanupIdleUsers();
+
+  assert.equal(pendingRegistrations.size, 0);
+  assert.equal(configuredCommandMenus.size, 0);
+});
 
 test("request lifecycle logs are structured and omit message and registration text", async () => {
   const entries: string[] = [];
