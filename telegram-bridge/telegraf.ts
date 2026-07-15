@@ -57,7 +57,6 @@ export function createBridgeBot(options: BridgeOptions) {
   const privateAccessMessage =
     "This bot is private. Access requests are reviewed manually. Use /register to request access.";
   const registrationExpiryMs = 10 * 60 * 1000;
-  const bookkeepingRetentionMs = idleSessionMs;
   const pendingRegistrations = new Map<number, number>();
   const maxActivePiRequests = 10;
   let activePiRequests = 0;
@@ -194,7 +193,7 @@ export function createBridgeBot(options: BridgeOptions) {
       }
     }
     for (const [userId, configuration] of configuredCommandMenus) {
-      if (configuration.lastActivityAt <= now() - bookkeepingRetentionMs) {
+      if (configuration.lastActivityAt <= cutoff) {
         configuredCommandMenus.delete(userId);
       }
     }
@@ -226,14 +225,6 @@ export function createBridgeBot(options: BridgeOptions) {
     }
   }
 
-  function releaseSessionReset(userId: number, state: UserState) {
-    state.processing = false;
-    state.pendingPrompt = Promise.resolve();
-    if (state.discardWhenIdle) {
-      disposeUserState(userId, state);
-    }
-  }
-
   async function getSession(state: UserState): Promise<PiSession> {
     if (!state.session) {
       state.session = await sessionFactory(readOnlyPiTools);
@@ -242,28 +233,29 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   async function resetSession(userId: number, state: UserState) {
-    const previousSession = state.session;
-    state.session = undefined;
-
-    if (previousSession?.isStreaming) {
-      await previousSession.abort();
-    }
-
-    previousSession?.dispose();
-    const replacementSession = await sessionFactory(readOnlyPiTools);
-    if (userStates.get(userId) === state) {
-      state.session = replacementSession;
-    } else {
-      replacementSession.dispose();
-    }
-  }
-
-  async function resetUserSession(userId: number, state: UserState) {
     state.processing = true;
-    state.pendingPrompt = resetSession(userId, state).finally(() => {
-      releaseSessionReset(userId, state);
-    });
-    await state.pendingPrompt;
+    try {
+      const previousSession = state.session;
+      state.session = undefined;
+
+      if (previousSession?.isStreaming) {
+        await previousSession.abort();
+      }
+
+      previousSession?.dispose();
+      const replacementSession = await sessionFactory(readOnlyPiTools);
+      if (userStates.get(userId) === state) {
+        state.session = replacementSession;
+      } else {
+        replacementSession.dispose();
+      }
+    } finally {
+      state.processing = false;
+      state.pendingPrompt = Promise.resolve();
+      if (state.discardWhenIdle) {
+        disposeUserState(userId, state);
+      }
+    }
   }
 
   const promptPi = (session: PiSession, prompt: string): Promise<string> => {
@@ -428,7 +420,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     try {
-      await resetUserSession(ctx.from.id, state);
+      await resetSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
     } catch {
@@ -601,8 +593,6 @@ export function createBridgeBot(options: BridgeOptions) {
     bot,
     userStates,
     cleanupIdleUsers,
-    configuredCommandMenus,
-    pendingRegistrations,
     getActivePiRequests: () => activePiRequests,
   };
 }

@@ -482,24 +482,30 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
   }
 });
 
-test("cleanup removes expired registration and command-menu bookkeeping", async () => {
+test("cleanup expires registration and command-menu bookkeeping", async () => {
   let now = 0;
-  const { bot, cleanupIdleUsers, configuredCommandMenus, pendingRegistrations } = testBot({
+  const requests: unknown[] = [];
+  const { bot, cleanupIdleUsers, calls } = testBot({
     token: "test-token",
     now: () => now,
     loadAllowedUsers: async () => new Map(),
     getLessons: async () => [],
     createPiSession: async () => session(),
+    recordRegistration: async (request) => { requests.push(request); },
   });
 
   await bot.handleUpdate(messageUpdate(9, "/register") as any);
-  assert.equal(pendingRegistrations.size, 1);
-  assert.equal(configuredCommandMenus.size, 1);
   now = 24 * 60 * 60 * 1000;
   cleanupIdleUsers();
+  const update = messageUpdate(10, "Ana");
+  update.message.from.id = 9;
+  update.message.chat.id = 9;
+  await bot.handleUpdate(update as any);
 
-  assert.equal(pendingRegistrations.size, 0);
-  assert.equal(configuredCommandMenus.size, 0);
+  assert.deepEqual(requests, []);
+  assert.equal(calls.filter(({ method }) => method === "setMyCommands").length, 2);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("This bot is private")));
 });
 
 test("request lifecycle logs are structured and omit message and registration text", async () => {
