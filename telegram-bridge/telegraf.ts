@@ -296,7 +296,8 @@ bot.start(async (ctx) => {
 
   try {
     await resetSession(state);
-    await ctx.reply("Started a fresh Pi session.");
+    state.welcomed = true;
+    await ctx.reply(welcomeMessage);
   } catch (error) {
     console.error("Session reset failed:", error);
     await ctx.reply("Sorry, I couldn't start a fresh session. Please try again.");
