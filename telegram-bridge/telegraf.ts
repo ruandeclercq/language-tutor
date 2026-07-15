@@ -88,6 +88,20 @@ const promptPi = (prompt: string): Promise<string> => {
 
 let pendingPrompt = Promise.resolve();
 let processing = false;
+const welcomedUserIds = new Set<number>();
+
+const welcomeMessage = `👋 Welcome!
+
+I'm here to help you practice your target language.
+
+You can:
+- Work through structured lessons
+- Practice conversation
+- Ask grammar questions
+- Translate words and phrases
+- Get corrections while you chat
+
+Use /lesson to browse available lessons or simply start chatting.`;
 
 const sendTyping = (ctx: { chat?: { id: number }; telegram: { sendChatAction: (chatId: number, action: "typing") => Promise<unknown> } }) =>
   ctx.chat ? ctx.telegram.sendChatAction(ctx.chat.id, "typing") : Promise.resolve();
@@ -118,6 +132,11 @@ bot.help((ctx) => {
 
 bot.on(message("text"), async (ctx) => {
   log(userLabel(ctx), ctx.message.text);
+
+  if (ctx.from && !welcomedUserIds.has(ctx.from.id)) {
+    welcomedUserIds.add(ctx.from.id);
+    await ctx.reply(welcomeMessage);
+  }
 
   if (processing) {
     await ctx.reply("⏳ I'm still working on your previous request.\nPlease wait for it to finish.");
