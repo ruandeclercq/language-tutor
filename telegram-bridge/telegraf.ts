@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
@@ -42,48 +42,24 @@ const privateAccessMessage =
   "This bot is private. Access requests are reviewed manually. Use /register to request access.";
 const registrationExpiryMs = 10 * 60 * 1000;
 const pendingRegistrations = new Map<number, number>();
-
-async function seedAllowlistFromEnvironment() {
-  const configuredId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
-  if (!Number.isSafeInteger(configuredId) || configuredId <= 0) {
-    console.warn("No valid TELEGRAM_ALLOWED_USER_ID found; allowlist will fail closed until populated.");
-    return;
-  }
-
-  await mkdir(dataDirectory, { recursive: true });
-  let users: AllowedUser[] = [];
-  try {
-    users = JSON.parse(await readFile(allowedUsersPath, "utf8"));
-    if (!Array.isArray(users) || users.some((user) =>
-      typeof user !== "object" || user === null ||
-      !Number.isSafeInteger((user as AllowedUser).telegramUserId) ||
-      typeof (user as AllowedUser).name !== "string" ||
-      typeof (user as AllowedUser).approvedAt !== "string" ||
-      Number.isNaN(Date.parse((user as AllowedUser).approvedAt)),
-    )) {
-      console.warn("Refusing to seed malformed allowlist.");
-      return;
-    }
-  } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      console.warn("Refusing to seed unreadable allowlist.", error);
-      return;
-    }
-  }
-
-  if (users.some((user) => user?.telegramUserId === configuredId)) {
-    return;
-  }
-
-  users.push({
-    telegramUserId: configuredId,
-    name: "Seeded user",
-    approvedAt: new Date().toISOString(),
-  });
-  await writeFile(allowedUsersPath, `${JSON.stringify(users, null, 2)}\n`, "utf8");
-}
+let cachedAllowedUsers: Map<number, AllowedUser> | undefined;
+let cachedAllowedUsersMtimeMs: number | null | undefined;
 
 async function loadAllowedUsers(): Promise<Map<number, AllowedUser>> {
+  let mtimeMs: number;
+  try {
+    ({ mtimeMs } = await stat(allowedUsersPath));
+  } catch (error) {
+    console.error("Allowlist unavailable; denying access.", error);
+    cachedAllowedUsers = new Map();
+    cachedAllowedUsersMtimeMs = null;
+    return cachedAllowedUsers;
+  }
+
+  if (cachedAllowedUsers !== undefined && cachedAllowedUsersMtimeMs === mtimeMs) {
+    return cachedAllowedUsers;
+  }
+
   try {
     const parsed: unknown = JSON.parse(await readFile(allowedUsersPath, "utf8"));
     if (!Array.isArray(parsed)) {
@@ -100,10 +76,14 @@ async function loadAllowedUsers(): Promise<Map<number, AllowedUser>> {
     if (users.length !== parsed.length) {
       throw new Error("allowlist contains malformed records");
     }
-    return new Map(users.map((user) => [user.telegramUserId, user]));
+    cachedAllowedUsers = new Map(users.map((user) => [user.telegramUserId, user]));
+    cachedAllowedUsersMtimeMs = mtimeMs;
+    return cachedAllowedUsers;
   } catch (error) {
     console.error("Allowlist unavailable; denying access.", error);
-    return new Map();
+    cachedAllowedUsers = new Map();
+    cachedAllowedUsersMtimeMs = mtimeMs;
+    return cachedAllowedUsers;
   }
 }
 
@@ -299,8 +279,6 @@ bot.use(async (ctx, next) => {
 
   return next();
 });
-
-await seedAllowlistFromEnvironment();
 
 await bot.telegram.setMyCommands([
   { command: "start", description: "Start the bot" },
