@@ -143,20 +143,55 @@ const createSession = () =>
     modelRegistry,
   }).then(({ session }) => session);
 
-let session = await createSession();
+type PiSession = Awaited<ReturnType<typeof createSession>>;
+type UserState = {
+  session?: PiSession;
+  pendingPrompt: Promise<void>;
+  processing: boolean;
+  welcomed: boolean;
+  lastActivityAt: number;
+};
 
-async function resetSession() {
-  await pendingPrompt;
+const userStates = new Map<number, UserState>();
 
-  if (session.isStreaming) {
-    await session.abort();
+function getUserState(userId: number): UserState {
+  let state = userStates.get(userId);
+  if (!state) {
+    state = {
+      pendingPrompt: Promise.resolve(),
+      processing: false,
+      welcomed: false,
+      lastActivityAt: Date.now(),
+    };
+    userStates.set(userId, state);
   }
-
-  session.dispose();
-  session = await createSession();
+  state.lastActivityAt = Date.now();
+  return state;
 }
 
-const promptPi = (prompt: string): Promise<string> => {
+async function getSession(state: UserState): Promise<PiSession> {
+  if (!state.session) {
+    state.session = await createSession();
+  }
+  return state.session;
+}
+
+async function resetSession(state: UserState) {
+  await state.pendingPrompt;
+
+  const previousSession = state.session;
+  state.session = undefined;
+
+  if (previousSession?.isStreaming) {
+    await previousSession.abort();
+  }
+
+  previousSession?.dispose();
+  const replacementSession = await createSession();
+  state.session = replacementSession;
+}
+
+const promptPi = (session: PiSession, prompt: string): Promise<string> => {
   return new Promise((resolve, reject) => {
     let responseText = "";
 
@@ -188,10 +223,6 @@ const promptPi = (prompt: string): Promise<string> => {
       .finally(unsubscribe);
   });
 };
-
-let pendingPrompt = Promise.resolve();
-let processing = false;
-const welcomedUserIds = new Set<number>();
 
 const welcomeMessage = `👋 Welcome!
 
@@ -279,8 +310,14 @@ await bot.telegram.setMyCommands([
 
 bot.start(async (ctx) => {
   log(userLabel(ctx), "/start");
-  await resetSession();
-  await ctx.reply("Started a fresh Pi session.");
+  const state = getUserState(ctx.from.id);
+  try {
+    await resetSession(state);
+    await ctx.reply("Started a fresh Pi session.");
+  } catch (error) {
+    console.error("Session reset failed:", error);
+    await ctx.reply("Sorry, I couldn't start a fresh session. Please try again.");
+  }
 });
 bot.help((ctx) => {
   log(userLabel(ctx), "/help");
@@ -288,8 +325,9 @@ bot.help((ctx) => {
 });
 
 bot.command("lesson", async (ctx) => {
-  if (ctx.from && !welcomedUserIds.has(ctx.from.id)) {
-    welcomedUserIds.add(ctx.from.id);
+  const state = getUserState(ctx.from.id);
+  if (!state.welcomed) {
+    state.welcomed = true;
     await ctx.reply(welcomeMessage);
   }
 
@@ -310,6 +348,7 @@ bot.command("lesson", async (ctx) => {
 });
 
 bot.action(/^lesson:(.+)$/, async (ctx) => {
+  const state = getUserState(ctx.from.id);
   const filename = ctx.match[1];
   await ctx.answerCbQuery();
   const chatId = ctx.chat?.id;
@@ -323,22 +362,29 @@ bot.action(/^lesson:(.+)$/, async (ctx) => {
     return;
   }
 
-  if (processing) {
+  if (state.processing) {
     await ctx.reply("⏳ I'm still working on your previous request.\nPlease wait for it to finish.");
     return;
   }
 
-  processing = true;
-  const placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
+  state.processing = true;
+  let placeholder;
+  try {
+    placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
+  } catch (error) {
+    state.processing = false;
+    state.pendingPrompt = Promise.resolve();
+    throw error;
+  }
   const typingInterval = setInterval(() => {
     void ctx.telegram.sendChatAction(chatId, "typing").catch((error) =>
       console.error("Typing indicator failed:", error),
     );
   }, 4_000);
 
-  void (async () => {
+  const prompt = (async () => {
     await ctx.telegram.sendChatAction(chatId, "typing");
-    const response = await promptPi(`Start the lesson from lessons/${filename}.`);
+    const response = await promptPi(await getSession(state), `Start the lesson from lessons/${filename}.`);
     const reply = response || "Pi returned no text response.";
     await ctx.telegram.editMessageText(
       chatId,
@@ -346,7 +392,9 @@ bot.action(/^lesson:(.+)$/, async (ctx) => {
       undefined,
       `📖 Lesson started: ${lesson.title}\n\n${reply}`,
     );
-  })().catch(async (error) => {
+  })();
+
+  state.pendingPrompt = prompt.catch(async (error) => {
     console.error("Lesson prompt failed:", error);
     await ctx.telegram.editMessageText(
       chatId,
@@ -356,37 +404,46 @@ bot.action(/^lesson:(.+)$/, async (ctx) => {
     );
   }).finally(() => {
     clearInterval(typingInterval);
-    processing = false;
+    state.processing = false;
+    state.pendingPrompt = Promise.resolve();
   });
 });
 
 bot.on(message("text"), async (ctx) => {
   log(userLabel(ctx), ctx.message.text);
 
-  if (ctx.from && !welcomedUserIds.has(ctx.from.id)) {
-    welcomedUserIds.add(ctx.from.id);
+  const state = getUserState(ctx.from.id);
+  if (!state.welcomed) {
+    state.welcomed = true;
     await ctx.reply(welcomeMessage);
   }
 
-  if (processing) {
+  if (state.processing) {
     await ctx.reply("⏳ I'm still working on your previous request.\nPlease wait for it to finish.");
     return;
   }
 
-  processing = true;
-  const placeholder = await ctx.reply("🤔 Thinking...");
+  state.processing = true;
+  let placeholder;
+  try {
+    placeholder = await ctx.reply("🤔 Thinking...");
+  } catch (error) {
+    state.processing = false;
+    state.pendingPrompt = Promise.resolve();
+    throw error;
+  }
   const typingInterval = setInterval(() => {
     void sendTyping(ctx).catch((error) => console.error("Typing indicator failed:", error));
   }, 4_000);
 
   const prompt = (async () => {
     await sendTyping(ctx);
-    const response = await promptPi(ctx.message.text);
+    const response = await promptPi(await getSession(state), ctx.message.text);
     const reply = response || "Pi returned no text response.";
     await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
   })();
 
-  pendingPrompt = prompt.catch((error) => {
+  state.pendingPrompt = prompt.catch((error) => {
     console.error("Pi prompt failed:", error);
     return ctx.telegram
       .editMessageText(
@@ -398,7 +455,8 @@ bot.on(message("text"), async (ctx) => {
       .then(() => undefined);
   }).finally(() => {
     clearInterval(typingInterval);
-    processing = false;
+    state.processing = false;
+    state.pendingPrompt = Promise.resolve();
   });
 
 });
