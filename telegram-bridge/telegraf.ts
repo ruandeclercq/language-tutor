@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { readFile, readdir } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
@@ -13,19 +13,118 @@ import {
 
 const cwd = "../agent/";
 const lessonsDirectory = path.resolve(cwd, "lessons");
+const dataDirectory = path.resolve("data");
+const allowedUsersPath = path.join(dataDirectory, "allowed-users.json");
+const accessRequestsPath = path.join(dataDirectory, "access-requests.jsonl");
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
-const allowedUserId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
 
 if (!token) {
   throw new Error("TELEGRAM_BOT_TOKEN is not set");
 }
 
-if (!Number.isSafeInteger(allowedUserId) || allowedUserId <= 0) {
-  throw new Error("TELEGRAM_ALLOWED_USER_ID must be a positive integer");
+const bot = new Telegraf(token);
+
+type AllowedUser = {
+  telegramUserId: number;
+  name: string;
+  approvedAt: string;
+};
+
+type RegistrationRequest = {
+  telegramUserId: number;
+  username: string | null;
+  name: string;
+  requestedAt: string;
+};
+
+const privateAccessMessage =
+  "This bot is private. Access requests are reviewed manually. Use /register to request access.";
+const registrationExpiryMs = 10 * 60 * 1000;
+const pendingRegistrations = new Map<number, number>();
+
+async function seedAllowlistFromEnvironment() {
+  const configuredId = Number(process.env.TELEGRAM_ALLOWED_USER_ID);
+  if (!Number.isSafeInteger(configuredId) || configuredId <= 0) {
+    console.warn("No valid TELEGRAM_ALLOWED_USER_ID found; allowlist will fail closed until populated.");
+    return;
+  }
+
+  await mkdir(dataDirectory, { recursive: true });
+  let users: AllowedUser[] = [];
+  try {
+    users = JSON.parse(await readFile(allowedUsersPath, "utf8"));
+    if (!Array.isArray(users) || users.some((user) =>
+      typeof user !== "object" || user === null ||
+      !Number.isSafeInteger((user as AllowedUser).telegramUserId) ||
+      typeof (user as AllowedUser).name !== "string" ||
+      typeof (user as AllowedUser).approvedAt !== "string" ||
+      Number.isNaN(Date.parse((user as AllowedUser).approvedAt)),
+    )) {
+      console.warn("Refusing to seed malformed allowlist.");
+      return;
+    }
+  } catch (error: unknown) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn("Refusing to seed unreadable allowlist.", error);
+      return;
+    }
+  }
+
+  if (users.some((user) => user?.telegramUserId === configuredId)) {
+    return;
+  }
+
+  users.push({
+    telegramUserId: configuredId,
+    name: "Seeded user",
+    approvedAt: new Date().toISOString(),
+  });
+  await writeFile(allowedUsersPath, `${JSON.stringify(users, null, 2)}\n`, "utf8");
 }
 
-const bot = new Telegraf(token);
+async function loadAllowedUsers(): Promise<Map<number, AllowedUser>> {
+  try {
+    const parsed: unknown = JSON.parse(await readFile(allowedUsersPath, "utf8"));
+    if (!Array.isArray(parsed)) {
+      throw new Error("allowlist must be an array");
+    }
+
+    const users = parsed.filter((user): user is AllowedUser =>
+      typeof user === "object" && user !== null &&
+      Number.isSafeInteger((user as AllowedUser).telegramUserId) &&
+      typeof (user as AllowedUser).name === "string" &&
+      typeof (user as AllowedUser).approvedAt === "string" &&
+      !Number.isNaN(Date.parse((user as AllowedUser).approvedAt)),
+    );
+    if (users.length !== parsed.length) {
+      throw new Error("allowlist contains malformed records");
+    }
+    return new Map(users.map((user) => [user.telegramUserId, user]));
+  } catch (error) {
+    console.error("Allowlist unavailable; denying access.", error);
+    return new Map();
+  }
+}
+
+function sanitizeName(input: string): string | null {
+  const sanitized = input
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .replace(/\s+/gu, " ")
+    .trim();
+  return sanitized.length > 0 && sanitized.length <= 100 ? sanitized : null;
+}
+
+async function recordRegistration(ctx: { from?: { id: number; username?: string }; }, name: string) {
+  const request: RegistrationRequest = {
+    telegramUserId: ctx.from!.id,
+    username: ctx.from!.username ?? null,
+    name,
+    requestedAt: new Date().toISOString(),
+  };
+  await mkdir(dataDirectory, { recursive: true });
+  await appendFile(accessRequestsPath, `${JSON.stringify(request)}\n`, "utf8");
+}
 
 const log = (actor: string, message: string) => {
   console.log(`[${new Date().toISOString()}] [${actor}] ${message}`);
@@ -121,18 +220,61 @@ const getLessons = async () => {
 const sendTyping = (ctx: { chat?: { id: number }; telegram: { sendChatAction: (chatId: number, action: "typing") => Promise<unknown> } }) =>
   ctx.chat ? ctx.telegram.sendChatAction(ctx.chat.id, "typing") : Promise.resolve();
 
-// bot.use() is middleware - it runs before your handlers and can inspect, modify, or reject an incoming update.
-bot.use((ctx, next) => {
-  if (ctx.from?.id !== allowedUserId) {
+function isCommand(text: string | undefined, command: string) {
+  return text !== undefined && text.trim().match(new RegExp(`^/${command}(?:@\\w+)?(?:\\s|$)`, "i")) !== null;
+}
+
+// Authorization is checked for every update so manual allowlist changes take effect immediately.
+bot.use(async (ctx, next) => {
+  if (ctx.chat?.type !== "private" || !ctx.from) {
+    return;
+  }
+
+  const allowedUsers = await loadAllowedUsers();
+  const approved = allowedUsers.has(ctx.from.id);
+  const text = ctx.message && "text" in ctx.message ? ctx.message.text : undefined;
+
+  if (isCommand(text, "register")) {
+    if (approved) {
+      await ctx.reply("You already have access.");
+    } else {
+      pendingRegistrations.set(ctx.from.id, Date.now() + registrationExpiryMs);
+      await ctx.reply("What is your name?");
+    }
+    return;
+  }
+
+  const pendingUntil = pendingRegistrations.get(ctx.from.id);
+  if (pendingUntil !== undefined) {
+    if (pendingUntil <= Date.now()) {
+      pendingRegistrations.delete(ctx.from.id);
+    } else if (typeof text === "string" && !text.trim().startsWith("/")) {
+      const name = sanitizeName(text);
+      if (!name) {
+        await ctx.reply("Please provide a valid name (up to 100 characters).");
+        return;
+      }
+      await recordRegistration(ctx, name);
+      pendingRegistrations.delete(ctx.from.id);
+      await ctx.reply("Your access request has been recorded for manual review.");
+      return;
+    }
+  }
+
+  if (!approved) {
+    await ctx.reply(privateAccessMessage);
     return;
   }
 
   return next();
 });
 
+await seedAllowlistFromEnvironment();
+
 await bot.telegram.setMyCommands([
   { command: "start", description: "Start the bot" },
   { command: "help", description: "Show help" },
+  { command: "register", description: "Request private access" },
 ]);
 
 bot.start(async (ctx) => {

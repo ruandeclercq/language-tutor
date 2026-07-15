@@ -1,3 +1,5 @@
 node_modules/
 .env
 .pi/
+data/allowed-users.json
+data/access-requests.jsonl
