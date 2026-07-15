@@ -96,10 +96,9 @@ const welcomedUserIds = new Set<number>();
 
 const welcomeMessage = `👋 Welcome!
 
-I'm here to help you practice your target language.
+I'm here to help you practice Spanish.
 
 You can:
-- Work through structured lessons
 - Practice conversation
 - Ask grammar questions
 - Translate words and phrases
@@ -198,11 +197,12 @@ bot.action(/^lesson:(.+)$/, async (ctx) => {
   void (async () => {
     await ctx.telegram.sendChatAction(chatId, "typing");
     const response = await promptPi(`Start the lesson from lessons/${filename}.`);
+    const reply = response || "Pi returned no text response.";
     await ctx.telegram.editMessageText(
       chatId,
       placeholder.message_id,
       undefined,
-      response || "Pi returned no text response.",
+      `📖 Lesson started: ${lesson.title}\n\n${reply}`,
     );
   })().catch(async (error) => {
     console.error("Lesson prompt failed:", error);
