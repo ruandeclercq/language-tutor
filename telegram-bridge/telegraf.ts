@@ -87,6 +87,10 @@ const promptPi = (prompt: string): Promise<string> => {
 };
 
 let pendingPrompt = Promise.resolve();
+let processing = false;
+
+const sendTyping = (ctx: { chat?: { id: number }; telegram: { sendChatAction: (chatId: number, action: "typing") => Promise<unknown> } }) =>
+  ctx.chat ? ctx.telegram.sendChatAction(ctx.chat.id, "typing") : Promise.resolve();
 
 // bot.use() is middleware - it runs before your handlers and can inspect, modify, or reject an incoming update.
 bot.use((ctx, next) => {
@@ -115,18 +119,40 @@ bot.help((ctx) => {
 bot.on(message("text"), async (ctx) => {
   log(userLabel(ctx), ctx.message.text);
 
-  const prompt = pendingPrompt.then(async () => {
+  if (processing) {
+    await ctx.reply("⏳ I'm still working on your previous request.\nPlease wait for it to finish.");
+    return;
+  }
+
+  processing = true;
+  const placeholder = await ctx.reply("🤔 Thinking...");
+  const typingInterval = setInterval(() => {
+    void sendTyping(ctx).catch((error) => console.error("Typing indicator failed:", error));
+  }, 4_000);
+
+  const prompt = (async () => {
+    await sendTyping(ctx);
     const response = await promptPi(ctx.message.text);
     const reply = response || "Pi returned no text response.";
-    log("telegram", reply);
-    await ctx.reply(reply);
-  });
+    await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
+  })();
 
   pendingPrompt = prompt.catch((error) => {
     console.error("Pi prompt failed:", error);
+    return ctx.telegram
+      .editMessageText(
+        ctx.chat.id,
+        placeholder.message_id,
+        undefined,
+        "Sorry, something went wrong while generating a response.\nPlease try again.",
+      )
+      .then(() => undefined);
+  }).finally(() => {
+    clearInterval(typingInterval);
+    processing = false;
   });
 
-  await prompt;
+  await pendingPrompt;
 });
 
 
