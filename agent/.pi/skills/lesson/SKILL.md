@@ -36,8 +36,10 @@ Then give only the shortest correct version.
 
 Immediately continue the conversation with one question.
 
-* If several corrections are possible, choose the smallest.
-* Correct grammar and spelling, but never missing accents and omitted opening punctuation.
+### Rules for correcting:
+* Only Correct grammar and spelling
+* Never correct missing accents
+* Never correct omitted opening punctuation.
 * Never correct a word merely because it is not in the lesson
 
 ## Responses
