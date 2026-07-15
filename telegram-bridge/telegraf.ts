@@ -28,7 +28,7 @@ type BridgeOptions = {
   token: string;
   loadAllowedUsers?: () => Promise<Map<number, AllowedUser>>;
   getLessons?: () => Promise<Array<{ filename: string; title: string }>>;
-  createSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
+  createPiSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
   now?: () => number;
 };
 
@@ -104,7 +104,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
-  const createDefaultSession = (tools: readonly PiTool[] = readOnlyPiTools) =>
+  const createPiSession = (tools: readonly PiTool[] = readOnlyPiTools) =>
     createAgentSession({
       cwd,
       sessionManager: SessionManager.inMemory(cwd),
@@ -113,7 +113,7 @@ export function createBridgeBot(options: BridgeOptions) {
       tools: [...tools],
     }).then(({ session }) => session);
 
-  const createSession = options.createSession ?? createDefaultSession;
+  const sessionFactory = options.createPiSession ?? createPiSession;
   type UserState = {
     session?: PiSession;
     pendingPrompt: Promise<void>;
@@ -189,7 +189,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   async function getSession(state: UserState): Promise<PiSession> {
     if (!state.session) {
-      state.session = await createSession(readOnlyPiTools);
+      state.session = await sessionFactory(readOnlyPiTools);
     }
     return state.session!;
   }
@@ -205,7 +205,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     previousSession?.dispose();
-    const replacementSession = await createSession(readOnlyPiTools);
+    const replacementSession = await sessionFactory(readOnlyPiTools);
     if (userStates.get(userId) === state) {
       state.session = replacementSession;
     } else {
