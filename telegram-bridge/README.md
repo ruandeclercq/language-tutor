@@ -23,14 +23,16 @@ Create a local `.env` file:
 
 ```env
 TELEGRAM_BOT_TOKEN=your-bot-token
-TELEGRAM_ALLOWED_USER_ID=your-telegram-user-id
 ```
 
-`TELEGRAM_ALLOWED_USER_ID` is used only to seed the file-based allowlist on
-startup. The active allowlist is `data/allowed-users.json`; after it exists,
-updates are authorized from that file and the file is reloaded for every
-incoming update. If the environment variable is missing, the bridge starts
-but warns and fails closed until the allowlist is populated manually.
+The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` is
+loaded from this local `.env` file unless it is already provided by the
+process environment. Keep the token secret and do not commit `.env`.
+
+The active allowlist is `data/allowed-users.json`. Its modification timestamp
+is checked for every incoming update, and the JSON is reparsed only when that
+timestamp changes. If the file is missing or malformed, the bridge fails
+closed until the allowlist is populated manually.
 
 Do not commit `.env` or the files under `data/`.
 
@@ -42,8 +44,8 @@ From this directory:
 npx tsx telegraf.ts
 ```
 
-The process validates the bot token, creates or seeds the allowlist when
-possible, registers the Telegram command menu, and starts polling Telegram.
+The process validates the bot token, registers the Telegram command menu, and
+starts polling Telegram.
 Stop it with `Ctrl-C`.
 
 ## Access control
