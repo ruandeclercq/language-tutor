@@ -76,8 +76,8 @@ not approve the user automatically.
 
 ## Telegram commands
 
-- `/start` resets the requesting user's Pi session and confirms that a fresh
-  session was started.
+- `/start` resets the requesting user's Pi session and shows the welcome
+  message.
 - `/help` shows the welcome message and supported tutoring activities.
 - `/lesson` lists Markdown lessons found in `../agent/lessons/`. Lesson titles
   come from a `title:` line in each file, falling back to the filename.
