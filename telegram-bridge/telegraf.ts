@@ -226,10 +226,7 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   async function getSession(state: UserState): Promise<PiSession> {
-    if (!state.session) {
-      state.session = await sessionFactory(readOnlyPiTools);
-    }
-    return state.session!;
+    return state.session ??= await sessionFactory(readOnlyPiTools);
   }
 
   async function resetSession(userId: number, state: UserState) {
@@ -258,34 +255,33 @@ export function createBridgeBot(options: BridgeOptions) {
     }
   }
 
-  const promptPi = (session: PiSession, prompt: string): Promise<string> => {
-    return new Promise((resolve, reject) => {
-      let responseText = "";
+  const promptPi = async (session: PiSession, prompt: string): Promise<string> => {
+    let responseText = "";
+    const unsubscribe = session.subscribe((event) => {
+      if (event.type !== "agent_end") {
+        return;
+      }
 
-      const unsubscribe = session.subscribe((event) => {
-        if (event.type !== "agent_end") {
-          return;
+      const response = event.messages.at(-1);
+      if (response?.role !== "assistant") {
+        return;
+      }
+
+      for (const part of response.content) {
+        if (part.type === "text") {
+          responseText += part.text;
         }
+      }
 
-        const response = event.messages.at(-1);
-        if (response?.role !== "assistant") {
-          return;
-        }
-
-        for (const part of response.content) {
-          if (part.type === "text") {
-            responseText += part.text;
-          }
-        }
-
-        responseText = responseText.trim();
-      });
-
-      session.prompt(prompt)
-        .then(() => resolve(responseText))
-        .catch(reject)
-        .finally(unsubscribe);
+      responseText = responseText.trim();
     });
+
+    try {
+      await session.prompt(prompt);
+      return responseText;
+    } finally {
+      unsubscribe();
+    }
   };
 
   const welcomeMessage = `👋 Welcome!
@@ -316,6 +312,10 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const sendTyping = (ctx: { chat?: { id: number }; telegram: { sendChatAction: (chatId: number, action: "typing") => Promise<unknown> } }) =>
     ctx.chat ? ctx.telegram.sendChatAction(ctx.chat.id, "typing") : Promise.resolve();
+
+  const startTyping = (send: () => Promise<unknown>) => setInterval(() => {
+    void send().catch(() => console.error("Typing indicator failed."));
+  }, 4_000);
 
   function isCommand(text: string | undefined, command: string) {
     return text !== undefined && text.trim().match(new RegExp(`^/${command}(?:@\\w+)?(?:\\s|$)`, "i")) !== null;
@@ -496,11 +496,7 @@ export function createBridgeBot(options: BridgeOptions) {
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
-    typingInterval = setInterval(() => {
-      void ctx.telegram.sendChatAction(chatId, "typing").catch(() =>
-        console.error("Typing indicator failed."),
-      );
-    }, 4_000);
+    typingInterval = startTyping(() => ctx.telegram.sendChatAction(chatId, "typing"));
 
     const prompt = (async () => {
       await ctx.telegram.sendChatAction(chatId, "typing");
@@ -557,9 +553,7 @@ export function createBridgeBot(options: BridgeOptions) {
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
-    typingInterval = setInterval(() => {
-      void sendTyping(ctx).catch(() => console.error("Typing indicator failed."));
-    }, 4_000);
+    typingInterval = startTyping(() => sendTyping(ctx));
 
     const prompt = (async () => {
       await sendTyping(ctx);
