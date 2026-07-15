@@ -152,7 +152,6 @@ bot.on(message("text"), async (ctx) => {
     processing = false;
   });
 
-  await pendingPrompt;
 });
 
 
