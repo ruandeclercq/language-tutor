@@ -126,6 +126,7 @@ type UserState = {
   processing: boolean;
   welcomed: boolean;
   lastActivityAt: number;
+  discardWhenIdle?: boolean;
 };
 ```
 
@@ -136,6 +137,8 @@ type UserState = {
 - `processing` rejects another request from the same user.
 - `welcomed` prevents repeated welcome messages during one process lifetime.
 - `lastActivityAt` supports disposal of inactive sessions after 24 hours.
+- `discardWhenIdle` defers disposal until an in-flight request completes after
+  the user loses allowlist access.
 
 Different users can create sessions and process requests concurrently. A
 single user has at most one active request. `/start` is rejected while that
@@ -145,9 +148,9 @@ disposes it, and creates a fresh session.
 ## Pi interaction
 
 `promptPi(session, prompt)` subscribes to the supplied user's Pi session,
-starts one prompt, and collects text from the final assistant message. Thinking
-events and final text are logged. The subscription is removed when the prompt
-settles.
+starts one prompt, and collects text from the final assistant message. The
+subscription is removed when the prompt settles. Pi request lifecycle events
+are logged with user and request IDs, but message text and responses are not.
 
 Text messages and lesson selections follow the same lifecycle:
 
