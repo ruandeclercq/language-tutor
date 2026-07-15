@@ -18,18 +18,23 @@ const lessonsDirectory = path.resolve(cwd, "lessons");
 const dataDirectory = path.resolve("data");
 const allowedUsersPath = path.join(dataDirectory, "allowed-users.json");
 const accessRequestsPath = path.join(dataDirectory, "access-requests.jsonl");
+export const readOnlyPiTools = ["read", "grep", "find", "ls"] as const;
+const idleSessionMs = 24 * 60 * 60 * 1000;
 
 type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type PiTool = typeof readOnlyPiTools[number];
 
 type BridgeOptions = {
   token: string;
   loadAllowedUsers?: () => Promise<Map<number, AllowedUser>>;
   getLessons?: () => Promise<Array<{ filename: string; title: string }>>;
-  createSession?: () => Promise<PiSession>;
+  createSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
+  now?: () => number;
 };
 
 export function createBridgeBot(options: BridgeOptions) {
   const bot = new Telegraf(options.token);
+  const now = options.now ?? Date.now;
 
   type RegistrationRequest = {
     telegramUserId: number;
@@ -99,12 +104,13 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
-  const createDefaultSession = () =>
+  const createDefaultSession = (tools: readonly PiTool[] = readOnlyPiTools) =>
     createAgentSession({
       cwd,
       sessionManager: SessionManager.inMemory(cwd),
       authStorage,
       modelRegistry,
+      tools: [...tools],
     }).then(({ session }) => session);
 
   const createSession = options.createSession ?? createDefaultSession;
@@ -114,6 +120,7 @@ export function createBridgeBot(options: BridgeOptions) {
     processing: boolean;
     welcomed: boolean;
     lastActivityAt: number;
+    discardWhenIdle?: boolean;
   };
 
   const userStates = new Map<number, UserState>();
@@ -125,13 +132,37 @@ export function createBridgeBot(options: BridgeOptions) {
         pendingPrompt: Promise.resolve(),
         processing: false,
         welcomed: false,
-        lastActivityAt: Date.now(),
+        lastActivityAt: now(),
       };
       userStates.set(userId, state);
     }
-    state.lastActivityAt = Date.now();
+    state.lastActivityAt = now();
     return state;
   }
+
+  function disposeUserState(userId: number, state: UserState) {
+    if (userStates.get(userId) !== state) {
+      return;
+    }
+    userStates.delete(userId);
+    try {
+      state.session?.dispose();
+    } catch (error) {
+      console.error("Session disposal failed:", error);
+    }
+  }
+
+  function cleanupIdleUsers() {
+    const cutoff = now() - idleSessionMs;
+    for (const [userId, state] of userStates) {
+      if (!state.processing && state.lastActivityAt <= cutoff) {
+        disposeUserState(userId, state);
+      }
+    }
+  }
+
+  const cleanupInterval = setInterval(cleanupIdleUsers, idleSessionMs);
+  cleanupInterval.unref();
 
   // Acquisition is synchronous so two updates cannot observe the same available slot.
   function acquirePiRequest(state: UserState): boolean {
@@ -144,23 +175,26 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   // Release exactly the resources acquired for one Pi-backed request.
-  function releasePiRequest(state: UserState, typingInterval?: ReturnType<typeof setInterval>) {
+  function releasePiRequest(userId: number, state: UserState, typingInterval?: ReturnType<typeof setInterval>) {
     if (typingInterval !== undefined) {
       clearInterval(typingInterval);
     }
     state.processing = false;
     state.pendingPrompt = Promise.resolve();
     activePiRequests -= 1;
+    if (state.discardWhenIdle) {
+      disposeUserState(userId, state);
+    }
   }
 
   async function getSession(state: UserState): Promise<PiSession> {
     if (!state.session) {
-      state.session = await createSession();
+      state.session = await createSession(readOnlyPiTools);
     }
     return state.session!;
   }
 
-  async function resetSession(state: UserState) {
+  async function resetSession(userId: number, state: UserState) {
     await state.pendingPrompt;
 
     const previousSession = state.session;
@@ -171,8 +205,12 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     previousSession?.dispose();
-    const replacementSession = await createSession();
-    state.session = replacementSession;
+    const replacementSession = await createSession(readOnlyPiTools);
+    if (userStates.get(userId) === state) {
+      state.session = replacementSession;
+    } else {
+      replacementSession.dispose();
+    }
   }
 
   const promptPi = (session: PiSession, prompt: string): Promise<string> => {
@@ -257,6 +295,17 @@ export function createBridgeBot(options: BridgeOptions) {
     await configureCommandMenu(ctx.from.id, approved).catch((error) =>
       console.error("Command menu configuration failed:", error));
 
+    if (!approved) {
+      const state = userStates.get(ctx.from.id);
+      if (state) {
+        if (state.processing) {
+          state.discardWhenIdle = true;
+        } else {
+          disposeUserState(ctx.from.id, state);
+        }
+      }
+    }
+
     if (isCommand(text, "register")) {
       if (approved) {
         await ctx.reply("You already have access.");
@@ -287,6 +336,11 @@ export function createBridgeBot(options: BridgeOptions) {
     if (!approved) {
       await ctx.reply(privateAccessMessage);
       return;
+    }
+
+    const state = userStates.get(ctx.from.id);
+    if (state) {
+      state.lastActivityAt = now();
     }
 
     return next();
@@ -323,7 +377,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     try {
-      await resetSession(state);
+      await resetSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
     } catch (error) {
@@ -393,7 +447,7 @@ export function createBridgeBot(options: BridgeOptions) {
     try {
       placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
     } catch (error) {
-      releasePiRequest(state);
+      releasePiRequest(ctx.from.id, state);
       throw error;
     }
     typingInterval = setInterval(() => {
@@ -420,7 +474,7 @@ export function createBridgeBot(options: BridgeOptions) {
         "Sorry, something went wrong while starting the lesson.\nPlease try again.").catch((editError) =>
         console.error("Lesson error message edit failed:", editError));
     }).finally(() => {
-      releasePiRequest(state, typingInterval);
+      releasePiRequest(ctx.from.id, state, typingInterval);
     });
   });
 
@@ -451,7 +505,7 @@ export function createBridgeBot(options: BridgeOptions) {
     try {
       placeholder = await ctx.reply("🤔 Thinking...");
     } catch (error) {
-      releasePiRequest(state);
+      releasePiRequest(ctx.from.id, state);
       throw error;
     }
     typingInterval = setInterval(() => {
@@ -479,12 +533,12 @@ export function createBridgeBot(options: BridgeOptions) {
         })
         .then(() => undefined);
     }).finally(() => {
-      releasePiRequest(state, typingInterval);
+      releasePiRequest(ctx.from.id, state, typingInterval);
     });
 
   });
 
-  return { bot, userStates };
+  return { bot, userStates, cleanupIdleUsers };
 }
 
 const token = process.env.TELEGRAM_BOT_TOKEN;

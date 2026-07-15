@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createBridgeBot } from "../telegraf.js";
+import { createBridgeBot, readOnlyPiTools } from "../telegraf.js";
 
 const approvedUser = (id: number) => new Map([[id, {
   telegramUserId: id,
@@ -51,6 +51,133 @@ function testBot(options: Parameters<typeof createBridgeBot>[0]) {
 }
 
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+test("Pi sessions receive only the read-only SDK tool allowlist", async () => {
+  const configuredTools: Array<readonly string[]> = [];
+  const { bot } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [],
+    createSession: async (tools) => {
+      configuredTools.push(tools);
+      return session();
+    },
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+  await tick();
+
+  assert.deepEqual(readOnlyPiTools, ["read", "grep", "find", "ls"]);
+  assert.deepEqual(configuredTools, [["read", "grep", "find", "ls"]]);
+});
+
+test("idle user states are disposed and removed by deterministic cleanup", async () => {
+  let now = 0;
+  let disposed = 0;
+  const { bot, userStates, cleanupIdleUsers } = testBot({
+    token: "test-token",
+    now: () => now,
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [],
+    createSession: async () => ({ ...session(), dispose: () => { disposed += 1; } }),
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+  await tick();
+  now = 24 * 60 * 60 * 1000;
+  cleanupIdleUsers();
+
+  assert.equal(disposed, 1);
+  assert.equal(userStates.has(1), false);
+});
+
+test("cleanup waits for an active Pi request to finish", async () => {
+  let now = 0;
+  let disposed = 0;
+  const started = deferred();
+  const finish = deferred();
+  const { bot, userStates, cleanupIdleUsers } = testBot({
+    token: "test-token",
+    now: () => now,
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [],
+    createSession: async () => ({
+      ...session(),
+      dispose: () => { disposed += 1; },
+      prompt: async () => {
+        started.resolve();
+        await finish.promise;
+      },
+    }),
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+  await started.promise;
+  now = 24 * 60 * 60 * 1000;
+  cleanupIdleUsers();
+
+  assert.equal(disposed, 0);
+  assert.equal(userStates.has(1), true);
+  finish.resolve();
+  await userStates.get(1)?.pendingPrompt;
+  cleanupIdleUsers();
+
+  assert.equal(disposed, 1);
+  assert.equal(userStates.has(1), false);
+});
+
+test("allowlist removal keeps active work, then requires a fresh session after reapproval", async () => {
+  let allowed = true;
+  let sessions = 0;
+  let disposed = 0;
+  const started = deferred();
+  const finish = deferred();
+  const { bot, userStates, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => allowed ? approvedUser(1) : new Map(),
+    getLessons: async () => [],
+    createSession: async () => {
+      sessions += 1;
+      const firstSession = sessions === 1;
+      return {
+        ...session(),
+        dispose: () => { disposed += 1; },
+        prompt: async () => {
+          if (firstSession) {
+            started.resolve();
+            await finish.promise;
+          }
+        },
+      };
+    },
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "first") as any);
+  await started.promise;
+  allowed = false;
+  await bot.handleUpdate(messageUpdate(1, "denied") as any);
+
+  assert.equal(disposed, 0);
+  assert.equal(userStates.has(1), true);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("This bot is private")));
+
+  finish.resolve();
+  await userStates.get(1)?.pendingPrompt;
+  assert.equal(disposed, 1);
+  assert.equal(userStates.has(1), false);
+
+  allowed = true;
+  await bot.handleUpdate(messageUpdate(1, "second") as any);
+  await tick();
+  assert.equal(sessions, 2);
+});
 
 test("unapproved lesson callbacks are denied before state or Pi initialization", async () => {
   let sessions = 0;
