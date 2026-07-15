@@ -65,13 +65,15 @@ allows different users to process requests concurrently, but JavaScript
 callbacks themselves do not execute in parallel.
 
 Each approved user has independent request state and a Pi session. A user's
-`processing` flag rejects a second request from that user; users do not block
-one another. Typing indicators run on per-request timers and are cleared when
-the request settles.
+`processing` flag rejects a second text message, `/start`, `/lesson`, or lesson
+button callback from that user with a busy response. Users do not block one
+another, subject to a global limit of 10 active Pi-backed requests. The 11th
+request receives a service-busy response immediately and is not queued. Typing
+indicators run on per-request timers and are cleared when the request settles.
 
-There is no global request queue, lock, or concurrency limit. State changes
-can interleave at `await` points, so handlers must keep state user-scoped and
-clean up their own pending work.
+There is no global request queue. Opening the `/lesson` menu does not consume
+global request capacity. State changes can interleave at `await` points, so
+handlers must keep state user-scoped and clean up their own pending work.
 
 ## Startup
 
@@ -150,13 +152,14 @@ settles.
 
 Text messages and lesson selections follow the same lifecycle:
 
-1. Mark the user's state as processing.
+1. Acquire global request capacity and mark the user's state as processing.
 2. Send a Telegram placeholder.
 3. Start a four-second typing-indicator interval.
 4. Prompt that user's Pi session.
 5. Edit the placeholder with the response.
 6. On failure, edit the placeholder with a generic error.
-7. Clear the interval and reset the user's processing state.
+7. Clear the interval, release the pending prompt and global capacity, and
+   reset the user's processing state.
 
 The lesson handler first re-reads the lesson directory and validates the
 callback filename against the current catalogue. It then prompts Pi with
@@ -185,9 +188,12 @@ to additional users.
 - A Pi failure is converted into a Telegram error for the originating user.
 - A Telegram placeholder failure resets that user's processing state and
   propagates the handler error to Telegraf.
-- A second request from the same user receives a busy message.
-- There is currently no global request limit, timeout, rate limiter, or
-  backpressure mechanism.
+- A second text message, `/start`, `/lesson`, or lesson-button callback from a
+  user with an active request receives a busy message.
+- The 11th active Pi-backed request receives a service-busy message and is not
+  queued; capacity, user processing state, typing intervals, and pending
+  prompts are released after success and failure.
+- There is currently no request timeout or rate limiter.
 - In-memory state and Pi sessions are lost on restart.
 
 Update this document whenever the runtime architecture changes.

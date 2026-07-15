@@ -90,11 +90,17 @@ user also sends the welcome message.
 ## Request behavior
 
 While Pi is processing a request, the bridge sends a placeholder and refreshes
-Telegram's typing indicator every four seconds. A second request receives a
-busy response. On success, the placeholder is edited with Pi's response; on
-failure, it is edited with a user-facing error. Empty Pi responses get a
-fallback message.
+Telegram's typing indicator every four seconds. Each user can have at most one
+active Pi-backed request; a second text message, `/start`, `/lesson`, or lesson
+button callback receives a busy response. Across all users, at most 10
+Pi-backed requests run concurrently. An 11th request is immediately rejected
+with a service-busy response rather than queued. On success, the placeholder is
+edited with Pi's response; on failure, it is edited with a user-facing error.
+Request capacity, processing state, typing intervals, and pending prompts are
+released after both success and failure. Empty Pi responses get a fallback
+message.
 
+Opening the `/lesson` menu itself does not consume global request capacity.
 Lesson buttons use the same request path and start Pi with a prompt referring
 to the selected lesson file.
 
@@ -113,7 +119,10 @@ name, and UTC timestamp. The raw registration message is not stored.
 
 - Pi sessions are created lazily in memory, one per approved Telegram user.
 - Processing state is per user, so different users can work concurrently.
-- There is no global concurrency limit.
+- At most 10 Pi-backed requests run concurrently across all users; excess
+  requests are rejected rather than queued.
+- Requests do not currently have a timeout or rate limiter.
 - Pi sessions are lost when the bridge restarts.
 - The allowlist and registration files have no locking or administrative UI.
-- There are currently no automated tests or type-check script in `package.json`.
+- Automated coverage is currently limited to access helpers; there is no
+  type-check script in `package.json`.
