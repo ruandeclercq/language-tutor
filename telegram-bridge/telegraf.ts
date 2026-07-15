@@ -485,7 +485,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     const requestId = randomUUID();
-    const lessonPrompt = `Start the lesson from lessons/${filename}.`;
+    const lessonPrompt = `/skill:lesson Start the lesson from lessons/${filename}.`;
     logRequest(ctx.from.id, requestId, "started", { prompt: lessonPrompt });
     let placeholder;
     let typingInterval: ReturnType<typeof setInterval> | undefined;

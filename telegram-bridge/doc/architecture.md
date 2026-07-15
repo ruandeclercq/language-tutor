@@ -171,8 +171,8 @@ Text messages and lesson selections follow the same lifecycle:
    reset the user's processing state.
 
 The lesson handler first re-reads the lesson directory and validates the
-callback filename against the current catalogue. It then prompts Pi with
-`Start the lesson from lessons/<filename>.`.
+callback filename against the current catalogue. It invokes Pi's
+`/skill:lesson` command with `Start the lesson from lessons/<filename>.`.
 
 ## Persistence and trust boundaries
 

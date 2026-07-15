@@ -264,8 +264,8 @@ test("lesson callbacks use each requester's independent Pi session", async () =>
   await tick();
 
   assert.deepEqual(prompts, [
-    { id: 1, prompt: "Start the lesson from lessons/one.md." },
-    { id: 2, prompt: "Start the lesson from lessons/two.md." },
+    { id: 1, prompt: "/skill:lesson Start the lesson from lessons/one.md." },
+    { id: 2, prompt: "/skill:lesson Start the lesson from lessons/two.md." },
   ]);
   assert.notEqual(userStates.get(1)?.session, userStates.get(2)?.session);
   assert.ok(calls.some(({ method, payload }) => method === "setMyCommands" &&
