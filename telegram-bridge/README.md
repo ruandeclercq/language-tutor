@@ -48,6 +48,14 @@ The process validates the bot token, registers the Telegram command menu, and
 starts polling Telegram.
 Stop it with `Ctrl-C`.
 
+## Development
+
+Run the test suite with:
+
+```sh
+npm test
+```
+
 ## Access control
 
 Only private-chat updates from users in `data/allowed-users.json` reach the
