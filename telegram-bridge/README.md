@@ -29,6 +29,16 @@ The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` is
 loaded from this local `.env` file unless it is already provided by the
 process environment. Keep the token secret and do not commit `.env`.
 
+To temporarily include prompt and response previews in request logs, add this
+to `.env` and restart the bridge:
+
+```env
+TELEGRAM_DEBUG_LOG_CONTENT=1
+```
+
+This mode is off by default. It logs up to 500 characters of each prompt and
+response, so enable it only while debugging and remove the setting afterward.
+
 The active allowlist is `data/allowed-users.json`. Its modification timestamp
 is checked for every incoming update, and the JSON is reparsed only when that
 timestamp changes. If the file is missing or malformed, the bridge fails

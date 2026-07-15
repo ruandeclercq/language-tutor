@@ -421,6 +421,7 @@ test("request lifecycle logs are structured and omit message and registration te
   try {
     const { bot } = testBot({
       token: "test-token",
+      debugLogContent: false,
       loadAllowedUsers: async () => approvedUser(1),
       getLessons: async () => [],
       createPiSession: async () => session(),
@@ -430,11 +431,51 @@ test("request lifecycle logs are structured and omit message and registration te
     assert.equal(entries.length, 2);
     for (const entry of entries) {
       const parsed = JSON.parse(entry);
+      assert.equal(typeof parsed.timestamp, "string");
+      assert.equal(Number.isNaN(Date.parse(parsed.timestamp)), false);
       assert.equal(parsed.userId, 1);
       assert.equal(typeof parsed.requestId, "string");
       assert.ok(["started", "succeeded"].includes(parsed.outcome));
       assert.equal(entry.includes("private message text"), false);
     }
+  } finally {
+    console.info = originalInfo;
+  }
+});
+
+test("debug request logging includes bounded prompt and response previews", async () => {
+  const entries: string[] = [];
+  const originalInfo = console.info;
+  console.info = (entry: string) => { entries.push(entry); };
+  try {
+    const response = "respuesta";
+    const { bot } = testBot({
+      token: "test-token",
+      debugLogContent: true,
+      loadAllowedUsers: async () => approvedUser(1),
+      getLessons: async () => [],
+      createPiSession: async () => ({
+        ...session(),
+        prompt: async () => {},
+        subscribe: (listener: any) => {
+          queueMicrotask(() => listener({
+            type: "agent_end",
+            messages: [{ role: "assistant", content: [{ type: "text", text: response }] }],
+          }));
+          return () => {};
+        },
+      }),
+    });
+    await bot.handleUpdate(messageUpdate(1, "private message") as any);
+    await tick();
+
+    assert.equal(entries.length, 2);
+    const [started, succeeded] = entries.map((entry) => JSON.parse(entry));
+    assert.equal(Number.isNaN(Date.parse(started.timestamp)), false);
+    assert.equal(Number.isNaN(Date.parse(succeeded.timestamp)), false);
+    assert.equal(started.promptPreview, "private message");
+    assert.equal(succeeded.responsePreview, response);
+    assert.equal(started.requestId, succeeded.requestId);
   } finally {
     console.info = originalInfo;
   }

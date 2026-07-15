@@ -21,6 +21,7 @@ const allowedUsersPath = path.join(dataDirectory, "allowed-users.json");
 const accessRequestsPath = path.join(dataDirectory, "access-requests.jsonl");
 export const readOnlyPiTools = ["read", "grep", "find", "ls"] as const;
 const idleSessionMs = 24 * 60 * 60 * 1000;
+const debugContentPreviewLength = 500;
 
 type PiSession = Pick<Awaited<ReturnType<typeof createAgentSession>>["session"],
   "isStreaming" | "abort" | "dispose" | "prompt" | "subscribe">;
@@ -45,11 +46,13 @@ type BridgeOptions = {
   createPiSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
   recordRegistration?: (request: RegistrationRequest) => Promise<void>;
   now?: () => number;
+  debugLogContent?: boolean;
 };
 
 export function createBridgeBot(options: BridgeOptions) {
   const bot = new Telegraf(options.token);
   const now = options.now ?? Date.now;
+  const debugLogContent = options.debugLogContent ?? process.env.TELEGRAM_DEBUG_LOG_CONTENT === "1";
 
   const privateAccessMessage =
     "This bot is private. Access requests are reviewed manually. Use /register to request access.";
@@ -102,8 +105,29 @@ export function createBridgeBot(options: BridgeOptions) {
     await (options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)))(request);
   }
 
-  const logRequest = (userId: number, requestId: string, outcome: "started" | "succeeded" | "failed") => {
-    console.info(JSON.stringify({ event: "pi_request", userId, requestId, outcome }));
+  // Content previews are opt-in and bounded so normal operational logs stay private and compact.
+  const contentPreview = (content: string) => content
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/\s+/gu, " ")
+    .trim()
+    .slice(0, debugContentPreviewLength);
+
+  const logRequest = (
+    userId: number,
+    requestId: string,
+    outcome: "started" | "succeeded" | "failed",
+    content?: { prompt?: string; response?: string },
+  ) => {
+    const entry = {
+      timestamp: new Date().toISOString(),
+      event: "pi_request",
+      userId,
+      requestId,
+      outcome,
+    } as Record<string, string | number>;
+    if (debugLogContent && content?.prompt !== undefined) entry.promptPreview = contentPreview(content.prompt);
+    if (debugLogContent && content?.response !== undefined) entry.responsePreview = contentPreview(content.response);
+    console.info(JSON.stringify(entry));
   };
 
   const authStorage = AuthStorage.create();
@@ -442,7 +466,8 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     const requestId = randomUUID();
-    logRequest(ctx.from.id, requestId, "started");
+    const lessonPrompt = `Start the lesson from lessons/${filename}.`;
+    logRequest(ctx.from.id, requestId, "started", { prompt: lessonPrompt });
     let placeholder;
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
@@ -459,7 +484,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
     const prompt = (async () => {
       await ctx.telegram.sendChatAction(chatId, "typing");
-      const response = await promptPi(await getSession(state), `Start the lesson from lessons/${filename}.`);
+      const response = await promptPi(await getSession(state), lessonPrompt);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(
         chatId,
@@ -467,7 +492,7 @@ export function createBridgeBot(options: BridgeOptions) {
         undefined,
         `📖 Lesson started: ${lesson.title}\n\n${reply}`,
       );
-      logRequest(ctx.from.id, requestId, "succeeded");
+      logRequest(ctx.from.id, requestId, "succeeded", { response });
     })();
 
     state.pendingPrompt = prompt.catch(async () => {
@@ -502,7 +527,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     const requestId = randomUUID();
-    logRequest(ctx.from.id, requestId, "started");
+    logRequest(ctx.from.id, requestId, "started", { prompt: ctx.message.text });
     let placeholder;
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
@@ -520,7 +545,7 @@ export function createBridgeBot(options: BridgeOptions) {
       const response = await promptPi(await getSession(state), ctx.message.text);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
-      logRequest(ctx.from.id, requestId, "succeeded");
+      logRequest(ctx.from.id, requestId, "succeeded", { response });
     })();
 
     state.pendingPrompt = prompt.catch(() => {
