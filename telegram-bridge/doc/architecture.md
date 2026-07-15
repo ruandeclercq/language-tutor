@@ -137,9 +137,9 @@ type UserState = {
   for eviction.
 
 Different users can create sessions and process requests concurrently. A
-single user has at most one active request. Session reset waits for that
-user's pending request, aborts a streaming session if necessary, disposes it,
-and creates a fresh session.
+single user has at most one active request. `/start` is rejected while that
+user is processing; otherwise it aborts a streaming session if necessary,
+disposes it, and creates a fresh session.
 
 ## Pi interaction
 

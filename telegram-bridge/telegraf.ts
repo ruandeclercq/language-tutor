@@ -289,6 +289,11 @@ await bot.telegram.setMyCommands([
 bot.start(async (ctx) => {
   log(userLabel(ctx), "/start");
   const state = getUserState(ctx.from.id);
+  if (state.processing) {
+    await ctx.reply("⏳ I'm still working on your previous request.\nPlease wait for it to finish.");
+    return;
+  }
+
   try {
     await resetSession(state);
     await ctx.reply("Started a fresh Pi session.");
