@@ -132,7 +132,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
-  const createPiSession = (tools: readonly PiTool[] = readOnlyPiTools) =>
+  const createPiSession = (tools: readonly PiTool[]) =>
     createAgentSession({
       cwd,
       sessionManager: SessionManager.inMemory(cwd),
@@ -213,10 +213,7 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   // Release exactly the resources acquired for one Pi-backed request.
-  function releasePiRequest(userId: number, state: UserState, typingInterval?: ReturnType<typeof setInterval>) {
-    if (typingInterval !== undefined) {
-      clearInterval(typingInterval);
-    }
+  function releasePiRequest(userId: number, state: UserState) {
     state.processing = false;
     state.pendingPrompt = Promise.resolve();
     activePiRequests -= 1;
@@ -309,13 +306,6 @@ export function createBridgeBot(options: BridgeOptions) {
   };
 
   const listLessons = options.getLessons ?? getLessons;
-
-  const sendTyping = (ctx: { chat?: { id: number }; telegram: { sendChatAction: (chatId: number, action: "typing") => Promise<unknown> } }) =>
-    ctx.chat ? ctx.telegram.sendChatAction(ctx.chat.id, "typing") : Promise.resolve();
-
-  const startTyping = (send: () => Promise<unknown>) => setInterval(() => {
-    void send().catch(() => console.error("Typing indicator failed."));
-  }, 4_000);
 
   function isCommand(text: string | undefined, command: string) {
     return text !== undefined && text.trim().match(new RegExp(`^/${command}(?:@\\w+)?(?:\\s|$)`, "i")) !== null;
@@ -488,7 +478,6 @@ export function createBridgeBot(options: BridgeOptions) {
     const lessonPrompt = `/skill:lesson Start the lesson from lessons/${filename}.`;
     logRequest(ctx.from.id, requestId, "started", { prompt: lessonPrompt });
     let placeholder;
-    let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
       placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
     } catch (error) {
@@ -496,10 +485,8 @@ export function createBridgeBot(options: BridgeOptions) {
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
-    typingInterval = startTyping(() => ctx.telegram.sendChatAction(chatId, "typing"));
 
-    const prompt = (async () => {
-      await ctx.telegram.sendChatAction(chatId, "typing");
+    const prompt = ctx.persistentChatAction("typing", async () => {
       const response = await promptPi(await getSession(state), lessonPrompt);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(
@@ -509,16 +496,16 @@ export function createBridgeBot(options: BridgeOptions) {
         `📖 Lesson started: ${lesson.title}\n\n${reply}`,
       );
       logRequest(ctx.from.id, requestId, "succeeded", { response });
-    })();
+    });
 
     state.pendingPrompt = prompt.catch(async () => {
       logRequest(ctx.from.id, requestId, "failed");
       console.error("Lesson prompt failed.");
       await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
-        "Sorry, something went wrong while starting the lesson.\nPlease try again.").catch((editError) =>
+        "Sorry, something went wrong while starting the lesson.\nPlease try again.").catch(() =>
         console.error("Lesson error message edit failed."));
     }).finally(() => {
-      releasePiRequest(ctx.from.id, state, typingInterval);
+      releasePiRequest(ctx.from.id, state);
     });
   });
 
@@ -545,7 +532,6 @@ export function createBridgeBot(options: BridgeOptions) {
     const requestId = randomUUID();
     logRequest(ctx.from.id, requestId, "started", { prompt: ctx.message.text });
     let placeholder;
-    let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
       placeholder = await ctx.reply("🤔 Thinking...");
     } catch (error) {
@@ -553,15 +539,13 @@ export function createBridgeBot(options: BridgeOptions) {
       releasePiRequest(ctx.from.id, state);
       throw error;
     }
-    typingInterval = startTyping(() => sendTyping(ctx));
 
-    const prompt = (async () => {
-      await sendTyping(ctx);
+    const prompt = ctx.persistentChatAction("typing", async () => {
       const response = await promptPi(await getSession(state), ctx.message.text);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
       logRequest(ctx.from.id, requestId, "succeeded", { response });
-    })();
+    });
 
     state.pendingPrompt = prompt.catch(() => {
       logRequest(ctx.from.id, requestId, "failed");
@@ -578,7 +562,7 @@ export function createBridgeBot(options: BridgeOptions) {
         })
         .then(() => undefined);
     }).finally(() => {
-      releasePiRequest(ctx.from.id, state, typingInterval);
+      releasePiRequest(ctx.from.id, state);
     });
 
   });
