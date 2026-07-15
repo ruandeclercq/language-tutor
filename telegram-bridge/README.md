@@ -56,6 +56,12 @@ Run the test suite with:
 npm test
 ```
 
+Type-check the bridge and tests with:
+
+```sh
+npx tsc --noEmit --module nodenext --moduleResolution nodenext --target es2022 --skipLibCheck telegraf.ts access.ts test/access.test.ts test/telegraf.test.ts
+```
+
 ## Access control
 
 Only private-chat updates from users in `data/allowed-users.json` reach the
@@ -132,5 +138,3 @@ name, and UTC timestamp. The raw registration message is not stored.
 - Requests do not currently have a timeout or rate limiter.
 - Pi sessions are lost when the bridge restarts.
 - The allowlist and registration files have no locking or administrative UI.
-- Automated coverage is currently limited to access helpers; there is no
-  type-check script in `package.json`.

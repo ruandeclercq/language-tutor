@@ -135,8 +135,7 @@ type UserState = {
 - `pendingPrompt` represents the active request and its cleanup path.
 - `processing` rejects another request from the same user.
 - `welcomed` prevents repeated welcome messages during one process lifetime.
-- `lastActivityAt` records the latest state access but is not currently used
-  for eviction.
+- `lastActivityAt` supports disposal of inactive sessions after 24 hours.
 
 Different users can create sessions and process requests concurrently. A
 single user has at most one active request. `/start` is rejected while that
@@ -176,10 +175,8 @@ without restarting the bridge.
 Telegram ID, optional username, sanitized name, and UTC request timestamp.
 Registration alone does not grant access.
 
-Pi and all users share the same `../agent/` working directory. The current
-session configuration does not explicitly restrict Pi tools, so workspace
-write access must be treated as a known security risk before opening the bot
-to additional users.
+Pi and all users share the same `../agent/` working directory, but sessions
+receive only the read-only `read`, `grep`, `find`, and `ls` tools.
 
 ## Failure and concurrency model
 
@@ -195,5 +192,7 @@ to additional users.
   prompts are released after success and failure.
 - There is currently no request timeout or rate limiter.
 - In-memory state and Pi sessions are lost on restart.
+- Pi-backed requests emit JSON lifecycle logs with `userId`, `requestId`, and
+  outcome. Message text, Pi responses, and registration names are not logged.
 
 Update this document whenever the runtime architecture changes.

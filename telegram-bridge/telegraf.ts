@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Telegraf } from "telegraf";
@@ -21,27 +22,34 @@ const accessRequestsPath = path.join(dataDirectory, "access-requests.jsonl");
 export const readOnlyPiTools = ["read", "grep", "find", "ls"] as const;
 const idleSessionMs = 24 * 60 * 60 * 1000;
 
-type PiSession = Awaited<ReturnType<typeof createAgentSession>>["session"];
+type PiSession = Pick<Awaited<ReturnType<typeof createAgentSession>>["session"],
+  "isStreaming" | "abort" | "dispose" | "prompt" | "subscribe">;
 type PiTool = typeof readOnlyPiTools[number];
+
+export type RegistrationRequest = {
+  telegramUserId: number;
+  username: string | null;
+  name: string;
+  requestedAt: string;
+};
+
+export async function appendRegistrationRequest(filePath: string, request: RegistrationRequest) {
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await appendFile(filePath, `${JSON.stringify(request)}\n`, "utf8");
+}
 
 type BridgeOptions = {
   token: string;
   loadAllowedUsers?: () => Promise<Map<number, AllowedUser>>;
   getLessons?: () => Promise<Array<{ filename: string; title: string }>>;
   createPiSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
+  recordRegistration?: (request: RegistrationRequest) => Promise<void>;
   now?: () => number;
 };
 
 export function createBridgeBot(options: BridgeOptions) {
   const bot = new Telegraf(options.token);
   const now = options.now ?? Date.now;
-
-  type RegistrationRequest = {
-    telegramUserId: number;
-    username: string | null;
-    name: string;
-    requestedAt: string;
-  };
 
   const privateAccessMessage =
     "This bot is private. Access requests are reviewed manually. Use /register to request access.";
@@ -58,8 +66,8 @@ export function createBridgeBot(options: BridgeOptions) {
     let mtimeMs: number;
     try {
       ({ mtimeMs } = await stat(allowedUsersPath));
-    } catch (error) {
-      console.error("Allowlist unavailable; denying access.", error);
+    } catch {
+      console.error("Allowlist unavailable; denying access.");
       cachedAllowedUsers = new Map();
       cachedAllowedUsersMtimeMs = null;
       return cachedAllowedUsers;
@@ -74,8 +82,8 @@ export function createBridgeBot(options: BridgeOptions) {
       cachedAllowedUsers = parseAllowedUsers(parsed);
       cachedAllowedUsersMtimeMs = mtimeMs;
       return cachedAllowedUsers;
-    } catch (error) {
-      console.error("Allowlist unavailable; denying access.", error);
+    } catch {
+      console.error("Allowlist unavailable; denying access.");
       cachedAllowedUsers = new Map();
       cachedAllowedUsersMtimeMs = mtimeMs;
       return cachedAllowedUsers;
@@ -91,16 +99,12 @@ export function createBridgeBot(options: BridgeOptions) {
       name,
       requestedAt: new Date().toISOString(),
     };
-    await mkdir(dataDirectory, { recursive: true });
-    await appendFile(accessRequestsPath, `${JSON.stringify(request)}\n`, "utf8");
+    await (options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)))(request);
   }
 
-  const log = (actor: string, message: string) => {
-    console.log(`[${new Date().toISOString()}] [${actor}] ${message}`);
+  const logRequest = (userId: number, requestId: string, outcome: "started" | "succeeded" | "failed") => {
+    console.info(JSON.stringify({ event: "pi_request", userId, requestId, outcome }));
   };
-
-  const userLabel = (ctx: { from?: { username?: string; id: number } }) =>
-    `@${ctx.from?.username ?? "unknown"} (id:${ctx.from?.id ?? "unknown"})`;
 
   const authStorage = AuthStorage.create();
   const modelRegistry = ModelRegistry.create(authStorage);
@@ -147,8 +151,8 @@ export function createBridgeBot(options: BridgeOptions) {
     userStates.delete(userId);
     try {
       state.session?.dispose();
-    } catch (error) {
-      console.error("Session disposal failed:", error);
+    } catch {
+      console.error("Session disposal failed.");
     }
   }
 
@@ -228,15 +232,12 @@ export function createBridgeBot(options: BridgeOptions) {
         }
 
         for (const part of response.content) {
-          if (part.type === "thinking") {
-            log("pi", `<thinking>${part.thinking}</thinking>`);
-          } else if (part.type === "text") {
+          if (part.type === "text") {
             responseText += part.text;
           }
         }
 
         responseText = responseText.trim();
-        log("pi", responseText);
       });
 
       session.prompt(prompt)
@@ -292,8 +293,8 @@ export function createBridgeBot(options: BridgeOptions) {
     // Telegram command scopes are per chat, so tutoring commands are only shown
     // after an approved user sends an update. Authorization below remains the
     // authority for every update, including stale command-menu entries.
-    await configureCommandMenu(ctx.from.id, approved).catch((error) =>
-      console.error("Command menu configuration failed:", error));
+    await configureCommandMenu(ctx.from.id, approved).catch(() =>
+      console.error("Command menu configuration failed."));
 
     if (!approved) {
       const state = userStates.get(ctx.from.id);
@@ -369,7 +370,6 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   bot.start(async (ctx) => {
-    log(userLabel(ctx), "/start");
     const state = getUserState(ctx.from.id);
     if (state.processing) {
       await ctx.reply(busyMessage);
@@ -380,13 +380,12 @@ export function createBridgeBot(options: BridgeOptions) {
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
-    } catch (error) {
-      console.error("Session reset failed:", error);
+    } catch {
+      console.error("Session reset failed.");
       await ctx.reply("Sorry, I couldn't start a fresh session. Please try again.");
     }
   });
   bot.help((ctx) => {
-    log(userLabel(ctx), "/help");
     getUserState(ctx.from.id).welcomed = true;
     return ctx.reply(welcomeMessage);
   });
@@ -442,6 +441,8 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply(serviceBusyMessage);
       return;
     }
+    const requestId = randomUUID();
+    logRequest(ctx.from.id, requestId, "started");
     let placeholder;
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
@@ -451,8 +452,8 @@ export function createBridgeBot(options: BridgeOptions) {
       throw error;
     }
     typingInterval = setInterval(() => {
-      void ctx.telegram.sendChatAction(chatId, "typing").catch((error) =>
-        console.error("Typing indicator failed:", error),
+      void ctx.telegram.sendChatAction(chatId, "typing").catch(() =>
+        console.error("Typing indicator failed."),
       );
     }, 4_000);
 
@@ -466,21 +467,21 @@ export function createBridgeBot(options: BridgeOptions) {
         undefined,
         `📖 Lesson started: ${lesson.title}\n\n${reply}`,
       );
+      logRequest(ctx.from.id, requestId, "succeeded");
     })();
 
-    state.pendingPrompt = prompt.catch(async (error) => {
-      console.error("Lesson prompt failed:", error);
+    state.pendingPrompt = prompt.catch(async () => {
+      logRequest(ctx.from.id, requestId, "failed");
+      console.error("Lesson prompt failed.");
       await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
         "Sorry, something went wrong while starting the lesson.\nPlease try again.").catch((editError) =>
-        console.error("Lesson error message edit failed:", editError));
+        console.error("Lesson error message edit failed."));
     }).finally(() => {
       releasePiRequest(ctx.from.id, state, typingInterval);
     });
   });
 
   bot.on(message("text"), async (ctx) => {
-    log(userLabel(ctx), ctx.message.text);
-
     const state = getUserState(ctx.from.id);
     if (state.processing) {
       await ctx.reply(busyMessage);
@@ -500,6 +501,8 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply(serviceBusyMessage);
       return;
     }
+    const requestId = randomUUID();
+    logRequest(ctx.from.id, requestId, "started");
     let placeholder;
     let typingInterval: ReturnType<typeof setInterval> | undefined;
     try {
@@ -509,7 +512,7 @@ export function createBridgeBot(options: BridgeOptions) {
       throw error;
     }
     typingInterval = setInterval(() => {
-      void sendTyping(ctx).catch((error) => console.error("Typing indicator failed:", error));
+      void sendTyping(ctx).catch(() => console.error("Typing indicator failed."));
     }, 4_000);
 
     const prompt = (async () => {
@@ -517,10 +520,12 @@ export function createBridgeBot(options: BridgeOptions) {
       const response = await promptPi(await getSession(state), ctx.message.text);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
+      logRequest(ctx.from.id, requestId, "succeeded");
     })();
 
-    state.pendingPrompt = prompt.catch((error) => {
-      console.error("Pi prompt failed:", error);
+    state.pendingPrompt = prompt.catch(() => {
+      logRequest(ctx.from.id, requestId, "failed");
+      console.error("Pi prompt failed.");
       return ctx.telegram
         .editMessageText(
           ctx.chat.id,
@@ -528,8 +533,8 @@ export function createBridgeBot(options: BridgeOptions) {
           undefined,
           "Sorry, something went wrong while generating a response.\nPlease try again.",
         )
-        .catch((editError) => {
-          console.error("Pi error message edit failed:", editError);
+        .catch(() => {
+          console.error("Pi error message edit failed.");
         })
         .then(() => undefined);
     }).finally(() => {
@@ -538,7 +543,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   });
 
-  return { bot, userStates, cleanupIdleUsers };
+  return { bot, userStates, cleanupIdleUsers, getActivePiRequests: () => activePiRequests };
 }
 
 const token = process.env.TELEGRAM_BOT_TOKEN;
