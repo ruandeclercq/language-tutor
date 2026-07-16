@@ -91,8 +91,25 @@ The allowlist is a JSON array:
 ]
 ```
 
-To approve a user, add a record and wait for their next update. To remove
-access, delete the record; the next update is denied.
+Approve a registered user with the approval command rather than editing the
+file directly. Run it without arguments to choose from the pending registered
+users:
+
+```sh
+npm run approve-user
+```
+
+You can still approve a known user directly:
+
+```sh
+npm run approve-user -- <telegram-user-id> "Name from the access request"
+```
+
+It atomically adds a new user to the allowlist, then sends them `Hola!` with
+instructions to use `/start`. If Telegram delivery fails, the command exits
+with an error but the allowlist change remains; run the same command again to
+resend the greeting without duplicating the user. To remove access, delete the
+record; the next update is denied.
 
 Unapproved private users receive the private-access message. They can send
 `/register`, then provide a name within 10 minutes. The sanitized request is

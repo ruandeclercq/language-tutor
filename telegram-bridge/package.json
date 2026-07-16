@@ -5,6 +5,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
+    "approve-user": "tsx approve-user.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "keywords": [],
