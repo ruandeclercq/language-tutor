@@ -1,10 +1,5 @@
 [
   {
-    "telegramUserId": 732963007,
-    "name": "Seeded user",
-    "approvedAt": "2026-07-15T00:00:00.000Z"
-  },
-  {
     "telegramUserId": 8863708495,
     "name": "Mary-Anne",
     "approvedAt": "2026-07-16T13:43:43.000Z"
@@ -13,5 +8,10 @@
     "telegramUserId": 8956359653,
     "name": "Vivian",
     "approvedAt": "2026-07-16T14:47:04.272Z"
+  },
+  {
+    "telegramUserId": 732963007,
+    "name": "Roo",
+    "approvedAt": "2026-07-16T16:08:04.637Z"
   }
 ]
