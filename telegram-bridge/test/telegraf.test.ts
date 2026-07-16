@@ -223,7 +223,7 @@ test("group updates are ignored before allowlist, Pi, and reply handling", async
 test("unapproved registration sanitizes and records a request without initializing Pi", async () => {
   const requests: Array<{ telegramUserId: number; username: string | null; name: string }> = [];
   let sessions = 0;
-  const { bot } = testBot({
+  const { bot, calls } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => new Map(),
     getLessons: async () => [],
@@ -239,6 +239,8 @@ test("unapproved registration sanitizes and records a request without initializi
 
   assert.deepEqual(requests.map(({ telegramUserId, username, name: recordedName }) =>
     ({ telegramUserId, username, name: recordedName })), [{ telegramUserId: 9, username: null, name: "Ana Maria" }]);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("WhatsApp me on +27 66 118 6289")));
   assert.equal(sessions, 0);
 });
 

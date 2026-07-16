@@ -360,7 +360,7 @@ export function createBridgeBot(options: BridgeOptions) {
         }
         await recordRegistration(ctx, name);
         pendingRegistrations.delete(ctx.from.id);
-        await ctx.reply("Your access request has been recorded for manual review.");
+        await ctx.reply("Your access request has been recorded. Please WhatsApp me on +27 66 118 6289 so I can approve your access.");
         return;
       }
     }

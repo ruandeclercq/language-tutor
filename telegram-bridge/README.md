@@ -96,8 +96,9 @@ access, delete the record; the next update is denied.
 
 Unapproved private users receive the private-access message. They can send
 `/register`, then provide a name within 10 minutes. The sanitized request is
-appended to `data/access-requests.jsonl` for manual review. Registration does
-not approve the user automatically. Expired registration prompts and cached
+appended to `data/access-requests.jsonl` for manual review. They are asked to
+WhatsApp the bot owner on `+27 66 118 6289`; registration does not approve the
+user automatically. Expired registration prompts and cached
 per-chat command-menu state are removed during the 24-hour idle cleanup.
 
 ## Telegram commands
