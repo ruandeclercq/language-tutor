@@ -103,16 +103,17 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
 
 ## Telegram commands
 
-- `/start` resets the requesting user's Pi session and shows the welcome
-  message.
+- `/start` resets the requesting user's Pi session, clears their lesson
+  selection, and shows the welcome message.
 - `/help` shows the welcome message and supported tutoring activities.
 - `/lesson` lists Markdown lessons found in `../agent/lessons/`. Lesson titles
   come from a `title:` line in each file, falling back to the filename.
 - `/register` starts the access request flow for an unapproved user. Approved
   users are told that they already have access.
 
-Any other text message is sent to Pi. The first approved interaction from a
-user also sends the welcome message.
+Any other text message requires a lesson selection. If none has been selected,
+the bot shows the lesson picker instead of sending the message to Pi. The first
+approved interaction from a user also sends the welcome message.
 
 ## Request behavior
 

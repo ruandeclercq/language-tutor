@@ -12,12 +12,14 @@ const approvedUser = (id: number) => new Map([[id, {
 }]]);
 
 function messageUpdate(id: number, text: string) {
+  const command = text.match(/^\/\S+/)?.[0];
   return {
     update_id: id,
     message: {
       message_id: id,
       date: 0,
       text,
+      ...(command ? { entities: [{ offset: 0, length: command.length, type: "bot_command" }] } : {}),
       from: { id, is_bot: false, first_name: "Test" },
       chat: { id, type: "private" as const },
     },
@@ -40,8 +42,22 @@ function lessonUpdate(id: number, filename: string) {
   };
 }
 
-function testBot(options: Parameters<typeof createBridgeBot>[0]) {
+function testBot(options: Parameters<typeof createBridgeBot>[0] & { selectedLesson?: string | null }) {
   const bridge = createBridgeBot(options);
+  const handleUpdate = bridge.bot.handleUpdate.bind(bridge.bot);
+  (bridge.bot as any).handleUpdate = async (update: any) => {
+    const userId = update.message?.from?.id ?? update.callback_query?.from?.id;
+    if (options.selectedLesson !== null && typeof userId === "number" && !bridge.userStates.has(userId)) {
+      bridge.userStates.set(userId, {
+        selectedLesson: options.selectedLesson ?? "one.md",
+        pendingPrompt: Promise.resolve(),
+        processing: false,
+        welcomed: false,
+        lastActivityAt: Date.now(),
+      });
+    }
+    return handleUpdate(update);
+  }
   const calls: Array<{ method: string; payload: any }> = [];
   let messageId = 100;
   (bridge.bot.telegram as any).callApi = async (method: string, payload: any) => {
@@ -66,7 +82,7 @@ test("Pi sessions receive only the read-only SDK tool allowlist", async () => {
   const { bot } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async (tools) => {
       configuredTools.push(tools);
       return session();
@@ -87,7 +103,7 @@ test("idle user states are disposed and removed by deterministic cleanup", async
     token: "test-token",
     now: () => now,
     loadAllowedUsers: async () => approvedUser(1),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => ({ ...session(), dispose: () => { disposed += 1; } }),
   });
 
@@ -109,7 +125,7 @@ test("cleanup waits for an active Pi request to finish", async () => {
     token: "test-token",
     now: () => now,
     loadAllowedUsers: async () => approvedUser(1),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => ({
       ...session(),
       dispose: () => { disposed += 1; },
@@ -144,7 +160,7 @@ test("allowlist removal keeps active work, then requires a fresh session after r
   const { bot, userStates, calls } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => allowed ? approvedUser(1) : new Map(),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => {
       sessions += 1;
       const firstSession = sessions === 1;
@@ -169,7 +185,7 @@ test("allowlist removal keeps active work, then requires a fresh session after r
   assert.equal(disposed, 0);
   assert.equal(userStates.has(1), true);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("This bot is private")));
+    payload.text.includes("currently available by invitation")));
 
   finish.resolve();
   await userStates.get(1)?.pendingPrompt;
@@ -196,7 +212,7 @@ test("unapproved lesson callbacks are denied before state or Pi initialization",
   assert.equal(sessions, 0);
   assert.equal(userStates.size, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("This bot is private")));
+    payload.text.includes("currently available by invitation")));
   const menu = calls.find(({ method }) => method === "setMyCommands");
   assert.deepEqual(menu?.payload.commands.map((command: { command: string }) => command.command), ["register"]);
 });
@@ -204,10 +220,10 @@ test("unapproved lesson callbacks are denied before state or Pi initialization",
 test("group updates are ignored before allowlist, Pi, and reply handling", async () => {
   let allowlistLoads = 0;
   let sessions = 0;
-  const { bot, calls } = testBot({
+  const { bot, calls, userStates } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => { allowlistLoads += 1; return approvedUser(1); },
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => { sessions += 1; return session(); },
   });
   const update = messageUpdate(1, "hola");
@@ -226,7 +242,7 @@ test("unapproved registration sanitizes and records a request without initializi
   const { bot, calls } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => new Map(),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => { sessions += 1; return session(); },
     recordRegistration: async (request) => { requests.push(request); },
   });
@@ -275,6 +291,60 @@ test("lesson callbacks use each requester's independent Pi session", async () =>
   await tick();
 });
 
+test("lesson failures reply when the placeholder cannot be edited", async () => {
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => ({ ...session(), prompt: async () => { throw new Error("Pi failed"); } }),
+  });
+  const callApi = (bot.telegram as any).callApi;
+  (bot.telegram as any).callApi = async (method: string, payload: any) => {
+    if (method === "editMessageText") throw new Error("edit failed");
+    return callApi(method, payload);
+  };
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("something went wrong while starting the lesson")));
+});
+
+test("ordinary text requires a lesson selection before reaching Pi", async () => {
+  let prompts = 0;
+  const { bot, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => ({ ...session(), prompt: async () => { prompts += 1; } }),
+    selectedLesson: null,
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+
+  assert.equal(prompts, 0);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("Choose a lesson before chatting")));
+});
+
+test("/start clears the selected lesson and requires a new choice", async () => {
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => session(),
+  });
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  await bot.handleUpdate(messageUpdate(1, "/start") as any);
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+
+  assert.equal(calls.filter(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("Choose a lesson before chatting")).length, 1);
+});
+
 test("start, lesson, and text share a user's active-request busy guard", async () => {
   const { bot, calls, userStates } = testBot({
     token: "test-token",
@@ -302,7 +372,7 @@ test("help marks the user welcomed and command-menu failures do not block it", a
   const { bot, calls } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => session(),
   });
   const originalCallApi = (bot.telegram as any).callApi;
@@ -432,7 +502,7 @@ for (const [name, createPiSession, failEdit] of [
     const bridge = testBot({
       token: "test-token",
       loadAllowedUsers: async () => approvedUser(1),
-      getLessons: async () => [],
+      getLessons: async () => [{ filename: "one.md", title: "One" }],
       createPiSession,
     });
     if (failEdit) {
@@ -457,10 +527,11 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
     const bridge = testBot({
       token: "test-token",
       loadAllowedUsers: async () => approvedUser(1),
-      getLessons: async () => [],
+      getLessons: async () => [{ filename: "one.md", title: "One" }],
       createPiSession: async () => session(),
     });
     bridge.userStates.set(1, {
+      selectedLesson: "one.md",
       processing: false,
       pendingPrompt: Promise.resolve(),
       welcomed: true,
@@ -491,7 +562,7 @@ test("cleanup expires registration and command-menu bookkeeping", async () => {
     token: "test-token",
     now: () => now,
     loadAllowedUsers: async () => new Map(),
-    getLessons: async () => [],
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => session(),
     recordRegistration: async (request) => { requests.push(request); },
   });
@@ -507,7 +578,7 @@ test("cleanup expires registration and command-menu bookkeeping", async () => {
   assert.deepEqual(requests, []);
   assert.equal(calls.filter(({ method }) => method === "setMyCommands").length, 2);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("This bot is private")));
+    payload.text.includes("currently available by invitation")));
 });
 
 test("request lifecycle logs are structured and omit message and registration text", async () => {
@@ -519,7 +590,7 @@ test("request lifecycle logs are structured and omit message and registration te
       token: "test-token",
       debugLogContent: false,
       loadAllowedUsers: async () => approvedUser(1),
-      getLessons: async () => [],
+      getLessons: async () => [{ filename: "one.md", title: "One" }],
       createPiSession: async () => session(),
     });
     await bot.handleUpdate(messageUpdate(1, "private message text") as any);
