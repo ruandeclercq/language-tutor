@@ -7,6 +7,7 @@ import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Markup } from "telegraf";
 import { parseAllowedUsers, sanitizeName, type AllowedUser } from "./access.js";
+import { createPiRequestCoordinator } from "./pi-request.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -63,8 +64,6 @@ export function createBridgeBot(options: BridgeOptions) {
     "Use /register to request access, and I’ll review your request shortly.";
   const registrationExpiryMs = 10 * 60 * 1000;
   const pendingRegistrations = new Map<number, number>();
-  const maxActivePiRequests = 10;
-  let activePiRequests = 0;
   const busyMessage = "⏳ I'm still working on your previous request.\nPlease wait for it to finish.";
   const serviceBusyMessage = "The service is busy. Please try again shortly.";
   let cachedAllowedUsers: Map<number, AllowedUser> | undefined;
@@ -245,30 +244,6 @@ export function createBridgeBot(options: BridgeOptions) {
   const cleanupInterval = setInterval(cleanupIdleUsers, idleSessionMs);
   cleanupInterval.unref();
 
-  // Acquisition is synchronous so two updates cannot observe the same available slot.
-  function acquirePiRequest(state: UserState): boolean {
-    if (state.processing || state.transcribing || activePiRequests >= maxActivePiRequests) {
-      return false;
-    }
-    state.processing = true;
-    activePiRequests += 1;
-    return true;
-  }
-
-  // Release exactly the resources acquired for one Pi-backed request.
-  function releasePiRequest(userId: number, state: UserState) {
-    state.processing = false;
-    state.pendingPrompt = Promise.resolve();
-    activePiRequests -= 1;
-    if (state.discardWhenIdle) {
-      disposeUserState(userId, state);
-    }
-  }
-
-  async function getSession(state: UserState): Promise<PiSession> {
-    return state.session ??= await sessionFactory(readOnlyPiTools);
-  }
-
   async function resetSession(userId: number, state: UserState) {
     state.processing = true;
     try {
@@ -323,6 +298,13 @@ export function createBridgeBot(options: BridgeOptions) {
       unsubscribe();
     }
   };
+
+  const piRequests = createPiRequestCoordinator({
+    createSession: () => sessionFactory(readOnlyPiTools),
+    promptSession: promptPi,
+    log: logRequest,
+    disposeState: (userId, state) => disposeUserState(userId, state as UserState),
+  });
 
   const welcomeMessage = `👋 Welcome!
 
@@ -520,45 +502,32 @@ export function createBridgeBot(options: BridgeOptions) {
 
     state.selectedLesson = filename;
 
-    if (!acquirePiRequest(state)) {
-      await ctx.reply(serviceBusyMessage);
-      return;
-    }
     const requestId = randomUUID();
     const lessonPrompt = `/skill:lesson Start the lesson from lessons/${filename}.`;
-    logRequest(ctx.from.id, requestId, "started", { prompt: lessonPrompt });
-    let placeholder;
-    try {
-      placeholder = await ctx.reply(`📖 Starting lesson: ${lesson.title}...`);
-    } catch (error) {
-      logRequest(ctx.from.id, requestId, "failed");
-      releasePiRequest(ctx.from.id, state);
-      throw error;
-    }
-
-    const prompt = ctx.persistentChatAction("typing", async () => {
-      const response = await promptPi(await getSession(state), lessonPrompt);
-      const reply = response || "Pi returned no text response.";
-      await ctx.telegram.editMessageText(
-        chatId,
-        placeholder.message_id,
-        undefined,
-        `📖 Lesson started: ${lesson.title}\n\n${reply}`,
-      );
-      logRequest(ctx.from.id, requestId, "succeeded", { response });
+    const accepted = await piRequests.run({
+      userId: ctx.from.id,
+      state,
+      requestId,
+      prompt: lessonPrompt,
+      callbacks: {
+        start: async () => await ctx.reply(`📖 Starting lesson: ${lesson.title}...`) as any,
+        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
+        success: async (response, placeholder) => {
+          const reply = response || "Pi returned no text response.";
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lesson started: ${lesson.title}\n\n${reply}`);
+        },
+        failure: async (placeholder) => {
+          if (!placeholder) return;
+          console.error("Lesson prompt failed.");
+          const errorMessage = "Sorry, something went wrong while starting the lesson.\nPlease try again.";
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, errorMessage).catch(async () => {
+            console.error("Lesson error message edit failed.");
+            await ctx.reply(errorMessage).catch(() => console.error("Lesson error message reply failed."));
+          });
+        },
+      },
     });
-
-    state.pendingPrompt = prompt.catch(async () => {
-      logRequest(ctx.from.id, requestId, "failed");
-      console.error("Lesson prompt failed.");
-      const errorMessage = "Sorry, something went wrong while starting the lesson.\nPlease try again.";
-      await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, errorMessage).catch(async () => {
-        console.error("Lesson error message edit failed.");
-        await ctx.reply(errorMessage).catch(() => console.error("Lesson error message reply failed."));
-      });
-    }).finally(() => {
-      releasePiRequest(ctx.from.id, state);
-    });
+    if (!accepted) await ctx.reply(serviceBusyMessage);
   });
 
   async function handleUserText(ctx: any, text: string) {
@@ -582,45 +551,28 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
 
-    if (!acquirePiRequest(state)) {
-      await ctx.reply(serviceBusyMessage);
-      return;
-    }
     const requestId = randomUUID();
-    logRequest(ctx.from.id, requestId, "started", { prompt: text });
-    let placeholder;
-    try {
-      placeholder = await ctx.reply("🤔 Thinking...");
-    } catch (error) {
-      logRequest(ctx.from.id, requestId, "failed");
-      releasePiRequest(ctx.from.id, state);
-      throw error;
-    }
-
-    const prompt = ctx.persistentChatAction("typing", async () => {
-      const response = await promptPi(await getSession(state), text);
-      const reply = response || "Pi returned no text response.";
-      await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
-      logRequest(ctx.from.id, requestId, "succeeded", { response });
+    const accepted = await piRequests.run({
+      userId: ctx.from.id,
+      state,
+      requestId,
+      prompt: text,
+      callbacks: {
+        start: async () => await ctx.reply("🤔 Thinking...") as any,
+        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
+        success: async (response, placeholder) => {
+          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, response || "Pi returned no text response.");
+        },
+        failure: async (placeholder) => {
+          if (!placeholder) return;
+          console.error("Pi prompt failed.");
+          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, "Sorry, something went wrong while generating a response.\nPlease try again.").catch(() => {
+            console.error("Pi error message edit failed.");
+          });
+        },
+      },
     });
-
-    state.pendingPrompt = prompt.catch(() => {
-      logRequest(ctx.from.id, requestId, "failed");
-      console.error("Pi prompt failed.");
-      return ctx.telegram
-        .editMessageText(
-          ctx.chat.id,
-          placeholder.message_id,
-          undefined,
-          "Sorry, something went wrong while generating a response.\nPlease try again.",
-        )
-        .catch(() => {
-          console.error("Pi error message edit failed.");
-        })
-        .then(() => undefined);
-    }).finally(() => {
-      releasePiRequest(ctx.from.id, state);
-    });
+    if (!accepted) await ctx.reply(serviceBusyMessage);
   }
 
   bot.on(message("text"), async (ctx) => {
@@ -705,7 +657,7 @@ export function createBridgeBot(options: BridgeOptions) {
     bot,
     userStates,
     cleanupIdleUsers,
-    getActivePiRequests: () => activePiRequests,
+    getActivePiRequests: piRequests.getActive,
   };
 }
 
