@@ -10,8 +10,14 @@
     "approvedAt": "2026-07-16T14:47:04.272Z"
   },
   {
+    "telegramUserId": 8964930227,
+    "name": "Ruby",
+    "requestedAt": "2026-07-17T21:07:45.950Z",
+    "approvedAt": "2026-07-21T15:13:45.799Z"
+  },
+  {
     "telegramUserId": 732963007,
-    "name": "Roo",
-    "approvedAt": "2026-07-16T16:08:04.637Z"
+    "name": "Ruan",
+    "approvedAt": "2026-07-21T16:51:35.963Z"
   }
 ]
