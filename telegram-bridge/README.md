@@ -24,6 +24,8 @@ Create a local `.env` file:
 ```env
 TELEGRAM_BOT_TOKEN=your-bot-token
 HAIMAKER_API_KEY=your-haimaker-api-key
+# Optional: a reusable registration/promo code that grants immediate access.
+REGISTRATION_PROMO_CODE=
 POSTHOG_API_KEY=
 # Set POSTHOG_HOST only to override the EU default:
 # POSTHOG_HOST=https://eu.i.posthog.com
@@ -165,12 +167,15 @@ with an error but the allowlist change remains; run the same command again to
 resend the greeting without duplicating the user. To remove access, delete the
 record; the next update is denied.
 
-Unapproved private users receive the private-access message. They can send
-`/register`, then provide a name within 10 minutes. The sanitized request is
-appended to `data/access-requests.jsonl` for manual review. They are asked to
-WhatsApp the bot owner on `+27 66 118 6289`; registration does not approve the
-user automatically. Expired registration prompts and cached
-per-chat command-menu state are removed during the 24-hour idle cleanup.
+An unapproved user's first private interaction starts registration (and
+`/register` restarts it) by asking whether they have a registration/promo code.
+Entering a configured `REGISTRATION_PROMO_CODE` grants immediate access; five
+incorrect attempts within 15 minutes lock further code attempts for 15 minutes.
+Choosing no code asks for a name within the existing 10-minute registration
+window. The sanitized request is appended to `data/access-requests.jsonl` for
+manual review, and the user is asked to WhatsApp the bot owner on
+`+27 66 118 6289`. Expired registration prompts and cached per-chat command-menu
+state are removed during the 24-hour idle cleanup.
 
 ## Telegram commands
 
@@ -182,8 +187,8 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
   filename. Choosing a lesson opens a launch screen with **Empezar**, **Ver 5
   resumen de la lección**, **Ver 5 frases útiles**, and **Volver**, rather than
   starting roleplay immediately.
-- `/register` starts the access request flow for an unapproved user. Approved
-  users are told that they already have access.
+- `/register` starts or restarts the registration flow for an unapproved user.
+  Approved users are told that they already have access.
 
 **Ver resumen de la lección** optionally requests a compact review of the
 selected lesson. It covers the scenario and roles, key vocabulary, useful

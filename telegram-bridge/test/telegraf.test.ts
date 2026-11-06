@@ -202,7 +202,7 @@ test("allowlist removal keeps active work, then requires a fresh session after r
   assert.equal(disposed, 0);
   assert.equal(userStates.has(1), true);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Este bot es privado")));
+    payload.text.includes("¿Tienes un código")));
 
   finish.resolve();
   await userStates.get(1)?.pendingPrompt;
@@ -229,7 +229,7 @@ test("unapproved lesson callbacks are denied before state or Pi initialization",
   assert.equal(sessions, 0);
   assert.equal(userStates.size, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Este bot es privado")));
+    payload.text.includes("¿Tienes un código")));
   const menu = calls.find(({ method }) => method === "setMyCommands");
   assert.deepEqual(menu?.payload.commands.map((command: { command: string }) => command.command), ["register"]);
 });
@@ -270,9 +270,13 @@ test("unapproved registration sanitizes and records a request without initializi
   });
 
   await bot.handleUpdate(messageUpdate(9, "/register") as any);
+  const no = messageUpdate(9, "no");
+  no.update_id = 10;
+  no.message.message_id = 10;
+  await bot.handleUpdate(no as any);
   const name = messageUpdate(9, "  Ana\u00a0Maria  ");
-  name.update_id = 10;
-  name.message.message_id = 10;
+  name.update_id = 11;
+  name.message.message_id = 11;
   await bot.handleUpdate(name as any);
 
   assert.deepEqual(requests.map(({ telegramUserId, username, name: recordedName }) =>
@@ -287,7 +291,7 @@ test("unapproved registration sanitizes and records a request without initializi
   assert.equal(JSON.stringify(events).includes("Ana Maria"), false);
 });
 
-test("does not capture registration events for denied or invalid requests", async () => {
+test("captures onboarding start but not invalid registration replies", async () => {
   const events: Array<{ event: string }> = [];
   const { bot } = testBot({
     token: "test-token",
@@ -300,7 +304,7 @@ test("does not capture registration events for denied or invalid requests", asyn
   });
 
   await bot.handleUpdate(messageUpdate(9, "unrequested registration text") as any);
-  await bot.handleUpdate(messageUpdate(9, "/register") as any);
+  await bot.handleUpdate(messageUpdate(9, "no") as any);
   await bot.handleUpdate(messageUpdate(9, "   ") as any);
 
   assert.deepEqual(events, [{ event: "registration_started" }]);
@@ -1105,7 +1109,7 @@ test("cleanup expires registration and command-menu bookkeeping", async () => {
   assert.deepEqual(requests, []);
   assert.equal(calls.filter(({ method }) => method === "setMyCommands").length, 2);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Este bot es privado")));
+    payload.text.includes("¿Tienes un código")));
 });
 
 test("request lifecycle logs are structured and omit message and registration text", async () => {

@@ -8,6 +8,7 @@ import { message } from "telegraf/filters";
 import { Markup } from "telegraf";
 import { PostHog } from "posthog-node";
 import { createAccessGate, createAllowedUsersLoader, type AllowedUser } from "./access.js";
+import { approveUser } from "./approve-user.js";
 import { createPiRequestCoordinator, type PiRequestState } from "./pi-request.js";
 import {
   AuthStorage,
@@ -116,9 +117,6 @@ export function createBridgeBot(options: BridgeOptions) {
     }
   }
 
-  const privateAccessMessage =
-    "👋 Este bot es privado.\n\n" +
-    "Usa /register para pedir acceso.";
   const busyMessage = "⏳ Todavía estoy trabajando.\nEspera un momento.";
   const serviceBusyMessage = "El servicio está ocupado.\nInténtalo más tarde.";
   const findAllowedUsers = options.loadAllowedUsers ?? createAllowedUsersLoader(allowedUsersPath);
@@ -126,6 +124,8 @@ export function createBridgeBot(options: BridgeOptions) {
     loadAllowedUsers: findAllowedUsers,
     now,
     recordRegistration: options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)),
+    promoCode: process.env.REGISTRATION_PROMO_CODE,
+    approveUser: async (user) => { await approveUser(allowedUsersPath, user, async () => {}); },
   });
 
   async function downloadVoice(fileId: string): Promise<Blob> {
@@ -397,10 +397,11 @@ export function createBridgeBot(options: BridgeOptions) {
     const decision = await accessGate.decide({
       userId: ctx.from.id,
       username: ctx.from.username,
+      name: [ctx.from.first_name, ctx.from.last_name].filter((name): name is string => typeof name === "string").join(" "),
       text,
       registerCommand: isCommand(text, "register"),
     });
-    const approved = decision.kind === "approved" || decision.kind === "already-approved";
+    const approved = decision.kind === "approved" || decision.kind === "already-approved" || decision.kind === "promo-approved";
 
     // Telegram command scopes are per chat, so tutoring commands are only shown
     // after an approved user sends an update. Authorization below remains the
@@ -425,6 +426,14 @@ export function createBridgeBot(options: BridgeOptions) {
     }
     if (decision.kind === "registration-prompt") {
       capture(ctx.from.id, "registration_started");
+      await ctx.reply("¿Tienes un código de registro o promoción? Responde sí o no.");
+      return;
+    }
+    if (decision.kind === "promo-code-prompt") {
+      await ctx.reply("Escribe tu código de registro o promoción.");
+      return;
+    }
+    if (decision.kind === "registration-name-prompt") {
       await ctx.reply("¿Cómo te llamas?");
       return;
     }
@@ -432,14 +441,21 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Escribe un nombre válido (máximo 100 caracteres).");
       return;
     }
+    if (decision.kind === "invalid-promo-code") {
+      await ctx.reply("Ese código no es válido. Inténtalo otra vez.");
+      return;
+    }
+    if (decision.kind === "promo-locked") {
+      await ctx.reply("Demasiados intentos. Espera 15 minutos antes de intentarlo de nuevo.");
+      return;
+    }
+    if (decision.kind === "promo-approved") {
+      await ctx.reply("Acceso concedido. Envía /start para comenzar.");
+      return;
+    }
     if (decision.kind === "registration-recorded") {
       capture(ctx.from.id, "registration_submitted");
       await ctx.reply("Solicitud registrada. Escribe por WhatsApp al +27 66 118 6289 para pedir acceso.");
-      return;
-    }
-
-    if (!approved) {
-      await ctx.reply(privateAccessMessage);
       return;
     }
 
