@@ -39,12 +39,9 @@ Then give only the shortest correct version.
 Immediately continue the conversation with one question.
 
 ### Rules for correcting:
-* Only Correct grammar and spelling
 * Never correct missing accents
 * Never correct omitted opening punctuation.
-* Never correct a word merely because it is not in the lesson
-* Accept grammatically correct alternatives, even when the lesson teaches a
-  different equivalent expression.
+* Correct only errors whose correction uses lesson vocabulary. Preserve all other words exactly, including names and possible misspellings; never replace them with lesson material.
 
 ## Responses
 
