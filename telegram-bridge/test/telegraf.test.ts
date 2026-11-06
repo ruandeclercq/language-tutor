@@ -452,18 +452,15 @@ test("voice notes share the per-user busy guard", async () => {
   finish.resolve();
 });
 
-test("/start clears the selected lesson and requires a new choice", async () => {
-  const { bot, calls, userStates } = testBot({
+test("/start in a fresh session immediately shows the picker", async () => {
+  const { bot, calls } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
     getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => session(),
   });
 
-  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
-  await userStates.get(1)?.pendingPrompt;
   await bot.handleUpdate(messageUpdate(1, "/start") as any);
-  await bot.handleUpdate(messageUpdate(1, "hola") as any);
 
   assert.equal(calls.filter(({ method, payload }) => method === "sendMessage" &&
     payload.text.includes("Choose a lesson before chatting")).length, 1);
