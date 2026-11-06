@@ -158,15 +158,23 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
 - `/start` resets the requesting user's Pi session, clears their lesson
   selection, shows the welcome message, and opens the lesson picker.
 - `/help` shows the welcome message and supported tutoring activities.
-- `/lesson` lists Markdown lessons found in `../agent/lessons/`. Lesson titles
-  come from a `title:` line in each file, falling back to the filename.
+- `/lesson` opens a picker of Markdown lessons found in `../agent/lessons/`.
+  Lesson titles come from a `title:` line in each file, falling back to the
+  filename. Choosing a lesson opens a launch screen with **Empezar**, **Ver 5
+  frases útiles**, and **Volver**, rather than starting roleplay immediately.
 - `/register` starts the access request flow for an unapproved user. Approved
   users are told that they already have access.
 
-Any other text message or voice note requires a lesson selection. If none has
-been selected, the bot shows the lesson picker instead of sending the message
-to Pi. The first approved interaction from a user also sends the welcome
-message. Voice notes are downloaded only into memory, transcribed by Haimaker's
+**Ver 5 frases útiles** shows five short Spanish phrases specific to the
+selected lesson, each with a brief English meaning, without starting roleplay.
+**Empezar** resets the session and starts the roleplay; the phrase option is no
+longer available. Text and voice are treated as active lesson responses only
+after the learner presses **Empezar**.
+
+Any other text message or voice note requires an active lesson. If none has
+been started, the bot shows the lesson picker instead of sending the message to
+Pi. The first approved interaction from a user also sends the welcome message.
+Voice notes are downloaded only into memory, transcribed by Haimaker's
 `openai/gpt-4o-mini-transcribe` model, then handled exactly like text. The bot
 does not force a transcription language. Voice notes are limited to five
 minutes and 20 MB; audio is not retained after the request.
@@ -190,8 +198,8 @@ typing intervals, and pending prompts are released after both success and
 failure. Empty Pi responses get a fallback message.
 
 Opening the `/lesson` menu itself does not consume global request capacity.
-Lesson buttons use the same request path and start Pi with a prompt referring
-to the selected lesson file.
+Choosing a lesson opens its launch screen; **Empezar** uses the same request
+path and starts Pi with a prompt referring to the selected lesson file.
 
 ## Data files
 
