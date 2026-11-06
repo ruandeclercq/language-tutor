@@ -409,6 +409,48 @@ export function createBridgeBot(options: BridgeOptions) {
     return (await listLessons()).find((lesson) => lesson.filename === filename);
   }
 
+  async function requestLessonPreview(
+    ctx: any,
+    state: UserState,
+    filename: string,
+    options: {
+      actionType: "prepare" | "summary";
+      prompt: string;
+      startMessage: string;
+      failureLog: string;
+      failureEditLog: string;
+      failureMessage: string;
+      onResponse?: (response: string) => void;
+    },
+  ) {
+    capture(ctx.from.id, "lesson_action_selected", { action_type: options.actionType });
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const accepted = await piRequests.run({
+      userId: ctx.from.id,
+      state,
+      requestId: randomUUID(),
+      prompt: options.prompt,
+      callbacks: {
+        start: async () => await ctx.reply(options.startMessage) as any,
+        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
+        success: async (response, placeholder) => {
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
+            response || "Pi no devolvió ninguna respuesta de texto.");
+          options.onResponse?.(response);
+          await ctx.reply("¿Qué quieres hacer?", lessonActions(filename));
+        },
+        failure: async (placeholder) => {
+          if (!placeholder) return;
+          console.error(options.failureLog);
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
+            options.failureMessage).catch(() => console.error(options.failureEditLog));
+        },
+      },
+    });
+    if (!accepted) await ctx.reply(serviceBusyMessage);
+  }
+
   function isCommand(text: string | undefined, command: string) {
     return text !== undefined && text.trim().match(new RegExp(`^/${command}(?:@\\w+)?(?:\\s|$)`, "i")) !== null;
   }
@@ -594,34 +636,18 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
-    capture(ctx.from.id, "lesson_action_selected", { action_type: "prepare" });
-    const chatId = ctx.chat?.id;
-    if (!chatId) return;
     const previousPhrases = state.reviewedPhrases?.join("\n") || "None.";
-    const accepted = await piRequests.run({
-      userId: ctx.from.id,
-      state,
-      requestId: randomUUID(),
+    await requestLessonPreview(ctx, state, filename, {
+      actionType: "prepare",
       prompt: `Read lessons/${filename} and return exactly five short scenario-relevant phrases in this format: Spanish phrase — brief English meaning. Use only language explicitly taught in the lesson. Do not repeat any Spanish phrase already shown in earlier reviews:\n${previousPhrases}\nDo not quiz the student, initiate roleplay, or change lesson state.`,
-      callbacks: {
-        start: async () => await ctx.reply("📖 Preparando 5 frases útiles...") as any,
-        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
-        success: async (response, placeholder) => {
-          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
-            response || "Pi no devolvió ninguna respuesta de texto.");
-          if (response) state.reviewedPhrases = [...state.reviewedPhrases ?? [], response];
-          await ctx.reply("¿Qué quieres hacer?", lessonActions(filename));
-        },
-        failure: async (placeholder) => {
-          if (!placeholder) return;
-          console.error("Lesson preparation prompt failed.");
-          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
-            "No pude preparar las frases útiles.\nInténtalo otra vez.").catch(() =>
-            console.error("Lesson preparation error message edit failed."));
-        },
+      startMessage: "📖 Preparando 5 frases útiles...",
+      failureLog: "Lesson preparation prompt failed.",
+      failureEditLog: "Lesson preparation error message edit failed.",
+      failureMessage: "No pude preparar las frases útiles.\nInténtalo otra vez.",
+      onResponse: (response) => {
+        if (response) state.reviewedPhrases = [...state.reviewedPhrases ?? [], response];
       },
     });
-    if (!accepted) await ctx.reply(serviceBusyMessage);
   });
 
   // A review reads the selected lesson without changing the session into an active roleplay.
@@ -638,32 +664,14 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
-    capture(ctx.from.id, "lesson_action_selected", { action_type: "summary" });
-    const chatId = ctx.chat?.id;
-    if (!chatId) return;
-    const accepted = await piRequests.run({
-      userId: ctx.from.id,
-      state,
-      requestId: randomUUID(),
+    await requestLessonPreview(ctx, state, filename, {
+      actionType: "summary",
       prompt: `Read lessons/${filename} and return a compact lesson review of 3500 characters or fewer. Use only material explicitly taught in the lesson. Include: the scenario and roles; key vocabulary; useful phrases; taught grammar or patterns; and all examples taught in the lesson. In the useful phrases section, every phrase must be on its own line in exactly this format: Spanish phrase — brief English meaning. Do not omit an English meaning for any useful phrase. Do not quiz the student, initiate roleplay, or change lesson state.`,
-      callbacks: {
-        start: async () => await ctx.reply("📖 Preparando el resumen de la lección...") as any,
-        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
-        success: async (response, placeholder) => {
-          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
-            response || "Pi no devolvió ninguna respuesta de texto.");
-          await ctx.reply("¿Qué quieres hacer?", lessonActions(filename));
-        },
-        failure: async (placeholder) => {
-          if (!placeholder) return;
-          console.error("Lesson summary prompt failed.");
-          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
-            "No pude preparar el resumen de la lección.\nInténtalo otra vez.").catch(() =>
-            console.error("Lesson summary error message edit failed."));
-        },
-      },
+      startMessage: "📖 Preparando el resumen de la lección...",
+      failureLog: "Lesson summary prompt failed.",
+      failureEditLog: "Lesson summary error message edit failed.",
+      failureMessage: "No pude preparar el resumen de la lección.\nInténtalo otra vez.",
     });
-    if (!accepted) await ctx.reply(serviceBusyMessage);
   });
 
   bot.action(/^start:(.+)$/, async (ctx) => {
