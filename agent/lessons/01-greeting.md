@@ -73,15 +73,15 @@ By the end of this lesson the student should be able to:
 Me llamo María.
 ```
 
-Means:
-
-> My name is María.
-
-Also:
+or
 
 ```
 Soy Maria.
 ```
+
+Means:
+
+> My name is María.
 
 ---
 
