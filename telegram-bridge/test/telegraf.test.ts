@@ -362,8 +362,16 @@ test("preparation uses a dedicated non-skill prompt and keeps the lesson pending
   assert.match(prompts[0], /exactly five short scenario-relevant phrases/);
   assert.equal(userStates.get(1)?.pendingLesson, "one.md");
   assert.equal(userStates.get(1)?.activeLesson, undefined);
+  assert.deepEqual(userStates.get(1)?.reviewedPhrases, [
+    "Hola — hello\nGracias — thanks\nPor favor — please\nHasta luego — goodbye\nSí — yes",
+  ]);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text === "¿Qué quieres hacer?" &&
     payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text).join(",") === "Empezar,Volver"));
+
+  await bot.handleUpdate(callbackUpdate(1, "prepare:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  assert.match(prompts[1], /Do not repeat any Spanish phrase already shown/);
+  assert.match(prompts[1], /Hola — hello/);
 });
 
 test("back clears the pending lesson and stale starts cannot activate another or deleted lesson", async () => {

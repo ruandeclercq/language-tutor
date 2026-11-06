@@ -147,6 +147,7 @@ export function createBridgeBot(options: BridgeOptions) {
   type UserState = PiRequestState & {
     pendingLesson?: string;
     activeLesson?: string;
+    reviewedPhrases?: string[];
     lessonComplete?: boolean;
     transcribing?: boolean;
     welcomed: boolean;
@@ -432,6 +433,7 @@ export function createBridgeBot(options: BridgeOptions) {
     try {
       state.pendingLesson = undefined;
       state.activeLesson = undefined;
+      state.reviewedPhrases = undefined;
       state.lessonComplete = false;
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
@@ -476,6 +478,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     state.pendingLesson = filename;
+    state.reviewedPhrases = [];
     state.lessonComplete = false;
     await ctx.reply(`📖 ${lesson.title}\n\n¿Qué quieres hacer?`, lessonActions(filename));
   });
@@ -495,17 +498,19 @@ export function createBridgeBot(options: BridgeOptions) {
     }
     const chatId = ctx.chat?.id;
     if (!chatId) return;
+    const previousPhrases = state.reviewedPhrases?.join("\n") || "None.";
     const accepted = await piRequests.run({
       userId: ctx.from.id,
       state,
       requestId: randomUUID(),
-      prompt: `Read lessons/${filename} and return exactly five short scenario-relevant phrases in this format: Spanish phrase — brief English meaning. Use only language explicitly taught in the lesson. Do not quiz the student, initiate roleplay, or change lesson state.`,
+      prompt: `Read lessons/${filename} and return exactly five short scenario-relevant phrases in this format: Spanish phrase — brief English meaning. Use only language explicitly taught in the lesson. Do not repeat any Spanish phrase already shown in earlier reviews:\n${previousPhrases}\nDo not quiz the student, initiate roleplay, or change lesson state.`,
       callbacks: {
         start: async () => await ctx.reply("📖 Preparando 5 frases útiles...") as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
             response || "Pi no devolvió ninguna respuesta de texto.");
+          if (response) state.reviewedPhrases = [...state.reviewedPhrases ?? [], response];
           await ctx.reply("¿Qué quieres hacer?", startActions(filename));
         },
         failure: async (placeholder) => {
@@ -544,6 +549,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
     state.activeLesson = filename;
     state.pendingLesson = undefined;
+    state.reviewedPhrases = undefined;
     state.lessonComplete = false;
     const accepted = await piRequests.run({
       userId: ctx.from.id,
@@ -584,6 +590,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     state.pendingLesson = undefined;
+    state.reviewedPhrases = undefined;
     await showLessonPicker(ctx);
   });
 

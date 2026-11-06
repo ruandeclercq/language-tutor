@@ -167,6 +167,8 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
 
 **Ver 5 frases útiles** shows five short Spanish phrases specific to the
 selected lesson, each with a brief English meaning, without starting roleplay.
+Later reviews ask Pi for phrases not shown in earlier reviews of that selected
+lesson.
 **Empezar** resets the session and starts the roleplay; the phrase option is no
 longer available. Text and voice are treated as active lesson responses only
 after the learner presses **Empezar**.
