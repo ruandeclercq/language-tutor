@@ -403,7 +403,8 @@ test("summary uses a dedicated review prompt, keeps the lesson pending, and rest
   assert.match(prompts[0], /3500 characters or fewer/);
   assert.match(prompts[0], /scenario and roles/);
   assert.match(prompts[0], /key vocabulary/);
-  assert.match(prompts[0], /English translations/);
+  assert.match(prompts[0], /Spanish phrase — brief English meaning/);
+  assert.match(prompts[0], /Do not omit an English meaning/);
   assert.match(prompts[0], /grammar or patterns/);
   assert.match(prompts[0], /all examples taught/);
   assert.match(prompts[0], /Do not quiz the student, initiate roleplay/);

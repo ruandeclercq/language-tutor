@@ -539,7 +539,7 @@ export function createBridgeBot(options: BridgeOptions) {
       userId: ctx.from.id,
       state,
       requestId: randomUUID(),
-      prompt: `Read lessons/${filename} and return a compact lesson review of 3500 characters or fewer. Use only material explicitly taught in the lesson. Include: the scenario and roles; key vocabulary; useful phrases with English translations; taught grammar or patterns; and all examples taught in the lesson. Do not quiz the student, initiate roleplay, or change lesson state.`,
+      prompt: `Read lessons/${filename} and return a compact lesson review of 3500 characters or fewer. Use only material explicitly taught in the lesson. Include: the scenario and roles; key vocabulary; useful phrases; taught grammar or patterns; and all examples taught in the lesson. In the useful phrases section, every phrase must be on its own line in exactly this format: Spanish phrase — brief English meaning. Do not omit an English meaning for any useful phrase. Do not quiz the student, initiate roleplay, or change lesson state.`,
       callbacks: {
         start: async () => await ctx.reply("📖 Preparando el resumen de la lección...") as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
