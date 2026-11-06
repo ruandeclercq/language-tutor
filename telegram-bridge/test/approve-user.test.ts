@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { AllowedUser } from "../access.js";
 import { approveUser, listPendingRegistrations } from "../approve-user.js";
 
 test("approval adds the user before sending the greeting", async () => {
@@ -17,6 +18,20 @@ test("approval adds the user before sending the greeting", async () => {
     });
 
     assert.equal(added, true);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("approval invokes the signup callback only for a new user", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "telegram-bridge-"));
+  const file = path.join(directory, "allowed-users.json");
+  const user = { telegramUserId: 7, name: "Ana", approvedAt: "2026-07-16T00:00:00.000Z" };
+  const signups: AllowedUser[] = [];
+  try {
+    await approveUser(file, user, async () => {}, async (approvedUser) => { signups.push(approvedUser); });
+    await approveUser(file, user, async () => {}, async (approvedUser) => { signups.push(approvedUser); });
+    assert.deepEqual(signups, [user]);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

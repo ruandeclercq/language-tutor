@@ -50,7 +50,7 @@ Captured events and their safe properties are:
 - `bot_started` - no properties.
 - `registration_started` - no properties.
 - `registration_submitted` - no properties.
-- `user_signed_up` - `signup_method`: `promo_code`.
+- `user_signed_up` - `signup_method`: `promo_code` or `manual_approval`.
 - `lesson_picker_shown` - `reason`: `command`, `first_use`, or `completion`.
 - `lesson_selected` - `lesson_filename`: selected Markdown lesson filename.
 - `lesson_action_selected` - `action_type`: `prepare`, `summary`, or `start`.
@@ -63,9 +63,9 @@ Captured events and their safe properties are:
   `voice_file_size_bytes`: declared voice-note size when available.
 
 Properties never contain learner-authored content, voice transcripts, prompts,
-or responses. `user_signed_up` currently covers immediate promo-code access;
-manual approvals happen in the separate approval CLI and are not captured by
-the bot's PostHog integration.
+or responses. Manual approvals emit `user_signed_up` from the approval CLI only
+when a new allowlist record is added; resending a greeting does not duplicate
+the event.
 
 ## Repository layout
 

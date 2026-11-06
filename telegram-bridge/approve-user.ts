@@ -6,6 +6,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { Telegraf } from "telegraf";
 import { parseAllowedUsers, sanitizeName, type AllowedUser } from "./access.js";
+import { createPostHogAnalytics } from "./telegraf.js";
 
 const allowedUsersPath = path.resolve("data", "allowed-users.json");
 const accessRequestsPath = path.resolve("data", "access-requests.jsonl");
@@ -77,6 +78,7 @@ export async function approveUser(
   filePath: string,
   user: AllowedUser,
   sendGreeting: (telegramUserId: number, greeting: string) => Promise<unknown>,
+  onApproved?: (user: AllowedUser) => Promise<void>,
 ): Promise<boolean> {
   const users = await loadAllowedUsers(filePath);
   const added = !users.has(user.telegramUserId);
@@ -86,6 +88,7 @@ export async function approveUser(
     const temporaryPath = `${filePath}.${process.pid}.tmp`;
     await writeFile(temporaryPath, `${JSON.stringify(Array.from(users.values()), null, 2)}\n`, "utf8");
     await rename(temporaryPath, filePath);
+    await onApproved?.(user);
   }
   await sendGreeting(user.telegramUserId, approvalGreeting);
   return added;
@@ -133,11 +136,28 @@ async function main(args: string[]) {
   }
 
   const telegram = new Telegraf(token).telegram;
-  const added = await approveUser(
-    allowedUsersPath,
-    { ...user, approvedAt: new Date().toISOString() },
-    (userId, greeting) => telegram.sendMessage(userId, greeting),
-  );
+  const analytics = createPostHogAnalytics();
+  let added: boolean;
+  try {
+    added = await approveUser(
+      allowedUsersPath,
+      { ...user, approvedAt: new Date().toISOString() },
+      (userId, greeting) => telegram.sendMessage(userId, greeting),
+      async (approvedUser) => {
+        try {
+          analytics?.capture(approvedUser.telegramUserId, "user_signed_up", { signup_method: "manual_approval" });
+        } catch {
+          console.error("Analytics capture failed.");
+        }
+      },
+    );
+  } finally {
+    try {
+      await analytics?.shutdown();
+    } catch {
+      console.error("Analytics shutdown failed.");
+    }
+  }
   console.info(added ? `Approved ${user.telegramUserId} and sent greeting.` : `User ${user.telegramUserId} was already approved; sent greeting.`);
 }
 
