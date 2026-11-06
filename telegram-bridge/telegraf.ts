@@ -265,15 +265,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const welcomeMessage = `👋 ¡Hola!
 
-  Aquí puedes practicar español.
-
-  Puedes:
-  - Hablar
-  - Preguntar sobre gramática
-  - Traducir palabras y frases
-  - Recibir correcciones
-
-  Usa /lesson para elegir una lección.`;
+  Practica conversaciones de tus clases de español con texto o voz.`;
 
   const getLessons = async () => {
     const filenames = (await readdir(lessonsDirectory))
