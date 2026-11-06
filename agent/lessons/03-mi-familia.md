@@ -1,6 +1,6 @@
 ---
 id: mi-familia
-title: Mi familia
+title: Mi familia y amigos
 level: A1
 estimated_duration: 30min
 ---
@@ -20,89 +20,90 @@ By the end of this lesson, the learner can:
 
 ## Family and pets vocabulary
 
-| Spanish | English |
-|---|---|
-| madre | mother |
-| padre | father |
-| hermano | brother |
-| hermana | sister |
-| hijo | son |
-| hija | daughter |
-| padrastro | stepfather |
-| madrastra | stepmother |
-| hermanastro | stepbrother |
-| hermanastra | stepsister |
-| abuelo | grandfather |
-| abuela | grandmother |
-| tío | uncle |
-| tía | aunt |
-| primo | male cousin |
-| prima | female cousin |
-| sobrino | nephew |
-| sobrina | niece |
-| nieto | grandson |
-| nieta | granddaughter |
-| esposo | husband |
-| esposa | wife |
-| novio | boyfriend |
-| novia | girlfriend |
-| pareja | partner |
-| amigo | male friend |
-| amiga | female friend |
-| mascota | pet |
-| perro | dog |
+| Masculine   | Feminine    | English                   |
+| ----------- | ----------- | ------------------------- |
+| padre       | madre       | father / mother           |
+| hermano     | hermana     | brother / sister          |
+| hijo        | hija        | son / daughter            |
+| padrastro   | madrastra   | stepfather / stepmother   |
+| hermanastro | hermanastra | stepbrother / stepsister  |
+| abuelo      | abuela      | grandfather / grandmother |
+| tío         | tía         | uncle / aunt              |
+| primo       | prima       | cousin                    |
+| sobrino     | sobrina     | nephew / niece            |
+| nieto       | nieta       | grandson / granddaughter  |
+| esposo      | esposa      | husband / wife            |
+| novio       | novia       | boyfriend / girlfriend    |
+| pareja      | pareja      | partner                   |
+| amigo       | amiga       | friend                    |
+| mascota     | mascota     | pet                       |
+| perro       | perra       | dog                       |
 
 ## Describing people
 
 ### Appearance
 
-| Masculine | Feminine | English |
-|---|---|---|
-| alto | alta | tall |
-| bajo | baja | short |
-| guapo | guapa | handsome / attractive |
-| bonito | bonita | pretty |
-| moreno | morena | dark-haired / dark-featured |
-| rubio | rubia | blond |
-| pelirrojo | pelirroja | red-haired |
-| delgado | delgada | slim |
-| fuerte | fuerte | strong |
-| joven | joven | young |
+| Masculine | Feminine  | English                     |
+| --------- | --------- | --------------------------- |
+| alto      | alta      | tall                        |
+| bajo      | baja      | short                       |
+| guapo     | guapa     | handsome / attractive       |
+| bonito    | bonita    | pretty                      |
+| moreno    | morena    | dark-haired / dark-featured |
+| rubio     | rubia     | blond                       |
+| pelirrojo | pelirroja | red-haired                  |
+| delgado   | delgada   | slim                        |
+| gordo     | gorda     | fat                         |
+| fuerte    | fuerte    | strong                      |
+| joven     | joven     | young                       |
 
 ### Personality
 
-| Masculine | Feminine | English |
-|---|---|---|
-| simpático | simpática | friendly / nice |
-| amable | amable | kind |
-| divertido | divertida | fun |
-| trabajador | trabajadora | hardworking |
-| inteligente | inteligente | intelligent |
+| Masculine  | Feminine    | English         |
+| ---------- | ----------- | --------------- |
+| simpático  | simpática   | friendly / nice |
+| amable     | amable      | kind            |
+| divertido  | divertida   | fun             |
+| trabajador | trabajadora | hardworking     |
+| inteligente| inteligente | intelligent     |
 
 ## Grammar
 
-### The verb `tener`
+### The verb `tener` (to have)
 
-| Subject | Form |
-|---|---|
-| yo | tengo |
-| tú | tienes |
-| él / ella | tiene |
-| nosotros | tenemos |
-| ellos / ellas | tienen |
+| Subject       | Form    | Description            |
+| ------------- | ------- | ---------------------- |
+| yo            | tengo   | I                      |
+| tú            | tienes  | you, informal singular |
+| él / ella     | tiene   | he / she               |
+| nosotros      | tenemos | we                     |
+| ellos / ellas | tienen  | they                   |
 
 Examples:
 
-- **Ana tiene una hermana.**
-- **Tenemos un perro.**
+* **Yo tengo una hermana.**
+* **Ana tiene una hermana.**
+* **Nosotros tenemos un perro.**
+
+Spanish often omits subject pronouns, so these are equivalent:
+* **Tengo una hermana.**
+* **Tiene una hermana.**
+* **Tenemos un perro.**
 
 ### Possessive adjectives
 
-| English | Spanish |
-|---|---|
-| my | mi / mis |
-| your | tu / tus |
-| his / her | su / sus |
+| English   | Singular noun | Plural noun |
+| --------- | ------------- | ----------- |
+| my        | mi            | mis         |
+| your      | tu            | tus         |
+| his / her | su            | sus         |
+
+Examples:
+
+* **mi amiga** = my friend
+* **mis amigas** = my friends
+* **tu perro** = your dog
+* **tus perros** = your dogs
 
 ## Useful sentence patterns
 
@@ -142,9 +143,13 @@ Examples:
 
 - **¿Cómo se llama?**  
   What is his / her name?
+- **¿Cómo se llaman?**  
+  What are their names?
 
 - **¿Cómo es?**  
   What is he / she like?
+- **¿Cómo son?**  
+  What are they like?
 
 - **¿Tiene mascotas?**  
   Does he / she have pets?
@@ -183,6 +188,20 @@ This is my mother. Her name is Susan. She is tall, dark-haired, and very friendl
 
 # Roleplay
 
+At the start of Round 1 and immediately after changing roles for Round 2, the
+tutor states this goal in Spanish before continuing the roleplay:
+
+> Objetivo:
+> - Conoce a una persona.
+> - Pregunta o responde para saber:
+>   - Cómo se llama.
+>   - Cómo es.
+>   - Si tiene mascotas.
+
+The goal is the same in both rounds. Only the roles change: in Round 1 the
+student gives the information, and in Round 2 the student asks for it. Do not
+refer to the tutor's family in the goal.
+
 ## Round 1
 
 The tutor asks the student about one family member, friend, or partner.
@@ -198,29 +217,27 @@ The student should practise:
 - **Tiene...**
 - **Tengo...**
 
-The tutor asks:
-
-- **¿Quién es?**
-- **¿Cómo se llama?**
-- **¿Cómo es?**
-- **¿Tiene mascotas?**
+The tutor asks one question at a time for details that are not already known.
+If the opening question establishes the relationship, do not ask `¿Quién es?`.
+Use `¿Cómo se llama?`, `¿Cómo es?`, and `¿Tiene mascotas?` as needed.
 
 Round 1 ends only after the student has said who the person is, given their
-name, described them, and said whether they have pets. Then immediately
-switch roles and begin Round 2.
+name, described them, and said whether they have pets. Then begin Round 2.
 
 ## Round 2
 
-The roles switch.
+The student asks the tutor about one of the tutor's family members, friends,
+or partner.
 
-The tutor introduces a fictional family member or friend. The student asks
-questions about that person.
+The tutor answers one question at a time using consistent details and only
+vocabulary and grammar from this lesson. Do not give information before the
+student asks.
 
-The tutor answers using only vocabulary and grammar from this lesson.
-
-For each roleplay, invent different details. Vary the person's relationship,
-name, description, siblings, and pets using only material from this lesson.
+For each roleplay, vary the person's relationship, name, description,
+siblings, and pets using only material from this lesson.
 For pets, use either `Tiene un perro.` or `No tiene mascotas.`
 
-Round 2 ends only after the student has asked all four questions and the tutor
-has answered them. Only then is the roleplay complete.
+Round 2 ends only after the student has learned the person's relationship,
+name, description, and whether they have pets through questions answered by
+the tutor. After answering the final missing detail, immediately end the
+roleplay. Do not wait for another student message.
