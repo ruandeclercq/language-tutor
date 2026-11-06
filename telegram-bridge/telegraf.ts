@@ -60,10 +60,10 @@ export function createBridgeBot(options: BridgeOptions) {
   const debugLogContent = options.debugLogContent ?? process.env.TELEGRAM_DEBUG_LOG_CONTENT === "1";
 
   const privateAccessMessage =
-    "👋 This bot is currently available by invitation.\n\n" +
-    "Use /register to request access, and I’ll review your request shortly.";
-  const busyMessage = "⏳ I'm still working on your previous request.\nPlease wait for it to finish.";
-  const serviceBusyMessage = "The service is busy. Please try again shortly.";
+    "👋 Este bot es privado.\n\n" +
+    "Usa /register para pedir acceso.";
+  const busyMessage = "⏳ Todavía estoy trabajando.\nEspera un momento.";
+  const serviceBusyMessage = "El servicio está ocupado.\nInténtalo más tarde.";
   const findAllowedUsers = options.loadAllowedUsers ?? createAllowedUsersLoader(allowedUsersPath);
   const accessGate = createAccessGate({
     loadAllowedUsers: findAllowedUsers,
@@ -261,17 +261,17 @@ export function createBridgeBot(options: BridgeOptions) {
     disposeState: disposeUserState,
   });
 
-  const welcomeMessage = `👋 Welcome!
+  const welcomeMessage = `👋 ¡Hola!
 
-  I'm here to help you practice Spanish.
+  Aquí puedes practicar español.
 
-  You can:
-  - Practice conversation
-  - Ask grammar questions
-  - Translate words and phrases
-  - Get corrections while you chat
+  Puedes:
+  - Hablar
+  - Preguntar sobre gramática
+  - Traducir palabras y frases
+  - Recibir correcciones
 
-  Use /lesson to choose a lesson before chatting.`;
+  Usa /lesson para elegir una lección.`;
 
   const getLessons = async () => {
     const filenames = (await readdir(lessonsDirectory))
@@ -297,12 +297,12 @@ export function createBridgeBot(options: BridgeOptions) {
   async function showLessonPicker(ctx: { reply: (...args: any[]) => Promise<unknown> }) {
     const lessons = await listLessons();
     if (lessons.length === 0) {
-      await ctx.reply("No lessons are available yet.");
+      await ctx.reply("No hay lecciones disponibles.");
       return;
     }
 
     await ctx.reply(
-      "📚 Choose a lesson before chatting:",
+      "📚 Elige una lección:",
       Markup.inlineKeyboard(
         lessons.map(({ filename, title }, index) => [
           Markup.button.callback(`${index + 1}. ${title}`, `lesson:${filename}`),
@@ -348,19 +348,19 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     if (decision.kind === "already-approved") {
-        await ctx.reply("You already have access.");
+        await ctx.reply("Ya tienes acceso.");
       return;
     }
     if (decision.kind === "registration-prompt") {
-        await ctx.reply("What is your name?");
+        await ctx.reply("¿Cómo te llamas?");
       return;
     }
     if (decision.kind === "invalid-registration") {
-      await ctx.reply("Please provide a valid name (up to 100 characters).");
+      await ctx.reply("Escribe un nombre válido (máximo 100 caracteres).");
       return;
     }
     if (decision.kind === "registration-recorded") {
-      await ctx.reply("Your access request has been recorded. Please WhatsApp me on +27 66 118 6289 so I can approve your access.");
+      await ctx.reply("Solicitud registrada. Escribe por WhatsApp al +27 66 118 6289 para pedir acceso.");
       return;
     }
 
@@ -417,7 +417,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await showLessonPicker(ctx);
     } catch {
       console.error("Session reset failed.");
-      await ctx.reply("Sorry, I couldn't start a fresh session. Please try again.");
+      await ctx.reply("No pude iniciar una sesión nueva. Inténtalo otra vez.");
     }
   });
   bot.help((ctx) => {
@@ -455,7 +455,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
     const lesson = (await listLessons()).find((item) => item.filename === filename);
     if (!lesson) {
-      await ctx.reply("That lesson is no longer available.");
+      await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
 
@@ -470,17 +470,17 @@ export function createBridgeBot(options: BridgeOptions) {
       requestId,
       prompt: lessonPrompt,
       callbacks: {
-        start: async () => await ctx.reply(`📖 Starting lesson: ${lesson.title}...`) as any,
+        start: async () => await ctx.reply(`📖 Iniciando la lección: ${lesson.title}...`) as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
-          const reply = consumeLessonCompletion(response, state) || "Pi returned no text response.";
-          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lesson started: ${lesson.title}\n\n${reply}`);
+          const reply = consumeLessonCompletion(response, state) || "Pi no devolvió ninguna respuesta de texto.";
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lección iniciada: ${lesson.title}\n\n${reply}`);
           if (state.lessonComplete) await showLessonPicker(ctx);
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
           console.error("Lesson prompt failed.");
-          const errorMessage = "Sorry, something went wrong while starting the lesson.\nPlease try again.";
+          const errorMessage = "No pude iniciar la lección.\nInténtalo otra vez.";
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, errorMessage).catch(async () => {
             console.error("Lesson error message edit failed.");
             await ctx.reply(errorMessage).catch(() => console.error("Lesson error message reply failed."));
@@ -519,17 +519,17 @@ export function createBridgeBot(options: BridgeOptions) {
       requestId,
       prompt: text,
       callbacks: {
-        start: async () => await ctx.reply("🤔 Thinking...") as any,
+        start: async () => await ctx.reply("🤔 Pensando...") as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
-          const reply = consumeLessonCompletion(response, state) || "Pi returned no text response.";
+          const reply = consumeLessonCompletion(response, state) || "Pi no devolvió ninguna respuesta de texto.";
           await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
           if (state.lessonComplete) await showLessonPicker(ctx);
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
           console.error("Pi prompt failed.");
-          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, "Sorry, something went wrong while generating a response.\nPlease try again.").catch(() => {
+          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, "No pude generar una respuesta.\nInténtalo otra vez.").catch(() => {
             console.error("Pi error message edit failed.");
           });
         },
@@ -553,11 +553,11 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (voice.duration > maxVoiceDurationSeconds) {
-      await ctx.reply("Voice notes must be five minutes or shorter.");
+      await ctx.reply("La nota no puede durar más de 5 minutos.");
       return;
     }
     if (voice.file_size !== undefined && voice.file_size > maxVoiceFileSizeBytes) {
-      await ctx.reply("Voice notes must be 20 MB or smaller.");
+      await ctx.reply("La nota no puede superar 20 MB.");
       return;
     }
     if (!state.selectedLesson) {
@@ -569,23 +569,23 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (!process.env.HAIMAKER_API_KEY && !options.transcribeVoice) {
-      await ctx.reply("Voice transcription is not configured. Please ask the bot owner to set HAIMAKER_API_KEY.");
+      await ctx.reply("La transcripción de voz no está disponible. Envía texto.");
       return;
     }
 
     state.transcribing = true;
     try {
-      const transcribingMessage = await ctx.reply("🎙️ Transcribing...");
+      const transcribingMessage = await ctx.reply("🎙️ Transcribiendo...");
       let audio: Blob;
       try {
         audio = await fetchVoice(voice.file_id);
       } catch (error) {
         console.error("Voice download failed.", error);
-        await ctx.reply("Sorry, I couldn't download that voice note. Please try again or send text instead.");
+        await ctx.reply("No pude descargar la nota. Inténtalo otra vez.");
         return;
       }
       if (audio.size > maxVoiceFileSizeBytes) {
-        await ctx.reply("Voice notes must be 20 MB or smaller.");
+        await ctx.reply("La nota no puede superar 20 MB.");
         return;
       }
       let transcript: string;
@@ -593,18 +593,18 @@ export function createBridgeBot(options: BridgeOptions) {
         transcript = await createTranscript(audio);
       } catch (error) {
         console.error("Voice transcription failed.", error);
-        await ctx.reply("Sorry, I couldn't transcribe that voice note. Please try again or send text instead.");
+        await ctx.reply("No pude transcribir la nota. Inténtalo otra vez.");
         return;
       }
       if (!transcript) {
-        await ctx.reply("I couldn't hear any speech in that voice note. Please try again or send text instead.");
+        await ctx.reply("No pude oír la nota. Inténtalo otra vez.");
         return;
       }
       await ctx.telegram.editMessageText(
         ctx.chat.id,
         transcribingMessage.message_id,
         undefined,
-        `🎙️ Heard: ${transcript.slice(0, 3_500)}`,
+        `🎙️ He oído: ${transcript.slice(0, 3_500)}`,
       ).catch(() => console.error("Transcript message edit failed."));
       state.transcribing = false;
       await handleUserText(ctx, transcript);

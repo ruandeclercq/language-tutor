@@ -82,8 +82,8 @@ export const scenarios: Scenario[] = [
     check: (replies) => {
       const failures = basicChecks(replies);
       const finalReply = replies.at(-1) ?? "";
-      if (!/puntuaci[oó]n:\s*[1-5]\/5/i.test(finalReply)) {
-        failures.push("The completed roleplay did not include a score out of 5.");
+      if (!/(buen trabajo|lo hiciste|para practicar|mejorar)/i.test(finalReply)) {
+        failures.push("The completed roleplay did not include qualitative feedback.");
       }
       if (!finalReply.includes("[[LESSON_COMPLETE]]")) {
         failures.push("The completed roleplay did not include the completion marker.");

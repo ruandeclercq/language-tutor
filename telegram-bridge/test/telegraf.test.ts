@@ -198,7 +198,7 @@ test("allowlist removal keeps active work, then requires a fresh session after r
   assert.equal(disposed, 0);
   assert.equal(userStates.has(1), true);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("currently available by invitation")));
+    payload.text.includes("Este bot es privado")));
 
   finish.resolve();
   await userStates.get(1)?.pendingPrompt;
@@ -225,7 +225,7 @@ test("unapproved lesson callbacks are denied before state or Pi initialization",
   assert.equal(sessions, 0);
   assert.equal(userStates.size, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("currently available by invitation")));
+    payload.text.includes("Este bot es privado")));
   const menu = calls.find(({ method }) => method === "setMyCommands");
   assert.deepEqual(menu?.payload.commands.map((command: { command: string }) => command.command), ["register"]);
 });
@@ -269,7 +269,7 @@ test("unapproved registration sanitizes and records a request without initializi
   assert.deepEqual(requests.map(({ telegramUserId, username, name: recordedName }) =>
     ({ telegramUserId, username, name: recordedName })), [{ telegramUserId: 9, username: null, name: "Ana Maria" }]);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("WhatsApp me on +27 66 118 6289")));
+    payload.text.includes("Solicitud registrada")));
   assert.equal(sessions, 0);
 });
 
@@ -321,7 +321,7 @@ test("lesson failures reply when the placeholder cannot be edited", async () => 
   await userStates.get(1)?.pendingPrompt;
 
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("something went wrong while starting the lesson")));
+    payload.text.includes("No pude iniciar la lección")));
 });
 
 test("ordinary text requires a lesson selection before reaching Pi", async () => {
@@ -338,7 +338,7 @@ test("ordinary text requires a lesson selection before reaching Pi", async () =>
 
   assert.equal(prompts, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Choose a lesson before chatting")));
+    payload.text.includes("Elige una lección:")));
 });
 
 test("lesson completion marker is hidden and opens the picker", async () => {
@@ -369,7 +369,7 @@ test("lesson completion marker is hidden and opens the picker", async () => {
   assert.ok(calls.some(({ method, payload }) => method === "editMessageText" &&
     payload.text === "Fin."));
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Choose a lesson before chatting")));
+    payload.text.includes("Elige una lección:")));
 
   await bot.handleUpdate(messageUpdate(2, "hola") as any);
   assert.equal(prompts, 1);
@@ -416,9 +416,9 @@ test("voice notes are transcribed and use the ordinary Pi request path", async (
 
   assert.equal(downloaded, 1);
   assert.deepEqual(prompts, ["hola desde voz"]);
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("Transcribing")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("Transcribiendo")));
   assert.ok(calls.some(({ method, payload }) => method === "editMessageText" &&
-    payload.text === "🎙️ Heard: hola desde voz"));
+    payload.text === "🎙️ He oído: hola desde voz"));
 });
 
 test("voice notes reject oversized duration and size before download", async () => {
@@ -440,8 +440,8 @@ test("voice notes reject oversized duration and size before download", async () 
   await bot.handleUpdate(oversized as any);
 
   assert.equal(downloaded, 0);
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("five minutes")));
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("20 MB")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("5 minutos")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("superar 20 MB")));
 });
 
 test("voice notes report missing transcription configuration", async () => {
@@ -459,7 +459,7 @@ test("voice notes report missing transcription configuration", async () => {
     await bot.handleUpdate(voiceUpdate(1) as any);
 
     assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-      payload.text.includes("HAIMAKER_API_KEY")));
+      payload.text.includes("no está disponible")));
   } finally {
     if (previousKey === undefined) delete process.env.HAIMAKER_API_KEY;
     else process.env.HAIMAKER_API_KEY = previousKey;
@@ -482,7 +482,7 @@ test("in-flight transcription prevents a concurrent text request", async () => {
   await tick();
   await bot.handleUpdate(messageUpdate(1, "hola") as any);
 
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("still working")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("Todavía estoy trabajando")));
   transcription.resolve();
   await voice;
 });
@@ -505,7 +505,7 @@ test("voice notes share the per-user busy guard", async () => {
   await bot.handleUpdate(voiceUpdate(1) as any);
 
   assert.equal(downloaded, 0);
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("still working")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("Todavía estoy trabajando")));
   finish.resolve();
 });
 
@@ -520,7 +520,7 @@ test("/start in a fresh session immediately shows the picker", async () => {
   await bot.handleUpdate(messageUpdate(1, "/start") as any);
 
   assert.equal(calls.filter(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Choose a lesson before chatting")).length, 1);
+    payload.text.includes("Elige una lección:")).length, 1);
 });
 
 test("start, lesson, and text share a user's active-request busy guard", async () => {
@@ -542,7 +542,7 @@ test("start, lesson, and text share a user's active-request busy guard", async (
   await bot.handleUpdate(messageUpdate(1, "still here") as any);
 
   const busyReplies = calls.filter(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("still working on your previous request"));
+    payload.text.includes("Todavía estoy trabajando"));
   assert.equal(busyReplies.length, 3);
 });
 
@@ -566,7 +566,7 @@ test("help marks the user welcomed and command-menu failures do not block it", a
   await tick();
 
   const welcomes = calls.filter(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("Welcome!"));
+    payload.text.includes("¡Hola!"));
   assert.equal(welcomes.length, 1);
 });
 
@@ -645,7 +645,7 @@ test("overlapping starts serialize session resets without using Pi capacity", as
   assert.equal(getActivePiRequests(), 0);
   assert.equal(sessions, 1);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("still working on your previous request")));
+    payload.text.includes("Todavía estoy trabajando")));
   created.resolve();
   await first;
   assert.equal(sessions, 1);
@@ -664,7 +664,7 @@ test("the eleventh concurrent request is rejected and all successful requests re
   await Promise.all(Array.from({ length: 10 }, (_, index) => bot.handleUpdate(messageUpdate(index + 1, "hola") as any)));
   assert.equal(getActivePiRequests(), 10);
   await bot.handleUpdate(messageUpdate(11, "hola") as any);
-  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("service is busy")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("servicio está ocupado")));
 
   finish.resolve();
   await Promise.all(Array.from({ length: 10 }, (_, index) => userStates.get(index + 1)?.pendingPrompt));
@@ -756,7 +756,7 @@ test("cleanup expires registration and command-menu bookkeeping", async () => {
   assert.deepEqual(requests, []);
   assert.equal(calls.filter(({ method }) => method === "setMyCommands").length, 2);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
-    payload.text.includes("currently available by invitation")));
+    payload.text.includes("Este bot es privado")));
 });
 
 test("request lifecycle logs are structured and omit message and registration text", async () => {
