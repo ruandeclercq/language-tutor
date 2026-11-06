@@ -161,9 +161,16 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
 - `/lesson` opens a picker of Markdown lessons found in `../agent/lessons/`.
   Lesson titles come from a `title:` line in each file, falling back to the
   filename. Choosing a lesson opens a launch screen with **Empezar**, **Ver 5
-  frases útiles**, and **Volver**, rather than starting roleplay immediately.
+  resumen de la lección**, **Ver 5 frases útiles**, and **Volver**, rather than
+  starting roleplay immediately.
 - `/register` starts the access request flow for an unapproved user. Approved
   users are told that they already have access.
+
+**Ver resumen de la lección** optionally requests a compact review of the
+selected lesson. It covers the scenario and roles, key vocabulary, useful
+phrases with English translations, taught grammar or patterns, and all examples
+taught in the lesson. It uses only lesson material and does not start roleplay
+or a quiz.
 
 **Ver 5 frases útiles** shows five short Spanish phrases specific to the
 selected lesson, each with a brief English meaning, without starting roleplay.

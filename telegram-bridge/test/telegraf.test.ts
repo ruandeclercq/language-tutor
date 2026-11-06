@@ -304,7 +304,7 @@ test("selecting a lesson shows its launch screen without starting Pi", async () 
   assert.equal(userStates.get(1)?.activeLesson, undefined);
   const launch = calls.find(({ method, payload }) => method === "sendMessage" && payload.text.includes("¿Qué quieres hacer?"));
   assert.deepEqual(launch?.payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text),
-    ["Empezar", "Ver 5 frases útiles", "Volver"]);
+    ["Empezar", "Ver resumen de la lección", "Ver 5 frases útiles", "Volver"]);
   assert.ok(calls.some(({ method, payload }) => method === "setMyCommands" &&
     payload.scope.type === "chat" && payload.commands.some((command: { command: string }) => command.command === "lesson")));
 });
@@ -335,7 +335,7 @@ test("start resets and starts each requester's selected lesson", async () => {
   assert.notEqual(userStates.get(1)?.session, userStates.get(2)?.session);
 });
 
-test("preparation uses a dedicated non-skill prompt and keeps the lesson pending", async () => {
+test("preparation uses a dedicated non-skill prompt, keeps the lesson pending, and restores launch actions", async () => {
   const prompts: string[] = [];
   const { bot, calls, userStates } = testBot({
     token: "test-token",
@@ -366,12 +366,75 @@ test("preparation uses a dedicated non-skill prompt and keeps the lesson pending
     "Hola — hello\nGracias — thanks\nPor favor — please\nHasta luego — goodbye\nSí — yes",
   ]);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text === "¿Qué quieres hacer?" &&
-    payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text).join(",") === "Empezar,Volver"));
+    payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text).join(",") ===
+      "Empezar,Ver resumen de la lección,Ver 5 frases útiles,Volver"));
 
   await bot.handleUpdate(callbackUpdate(1, "prepare:one.md") as any);
   await userStates.get(1)?.pendingPrompt;
   assert.match(prompts[1], /Do not repeat any Spanish phrase already shown/);
   assert.match(prompts[1], /Hola — hello/);
+});
+
+test("summary uses a dedicated review prompt, keeps the lesson pending, and restores launch actions", async () => {
+  const prompts: string[] = [];
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    activeLesson: null,
+    createPiSession: async () => ({
+      ...session(),
+      prompt: async (prompt: string) => { prompts.push(prompt); },
+      subscribe: (listener: any) => {
+        queueMicrotask(() => listener({ type: "agent_end", messages: [{
+          role: "assistant", content: [{ type: "text", text: "Resumen de la lección" }],
+        }] }));
+        return () => {};
+      },
+    }),
+  });
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "summary:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].includes("/skill:lesson"), false);
+  assert.match(prompts[0], /3500 characters or fewer/);
+  assert.match(prompts[0], /scenario and roles/);
+  assert.match(prompts[0], /key vocabulary/);
+  assert.match(prompts[0], /English translations/);
+  assert.match(prompts[0], /grammar or patterns/);
+  assert.match(prompts[0], /all examples taught/);
+  assert.match(prompts[0], /Do not quiz the student, initiate roleplay/);
+  assert.equal(userStates.get(1)?.pendingLesson, "one.md");
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text === "¿Qué quieres hacer?" &&
+    payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text).join(",") ===
+      "Empezar,Ver resumen de la lección,Ver 5 frases útiles,Volver"));
+});
+
+test("stale summary callbacks are acknowledged without starting or activating a lesson", async () => {
+  let lessons = [{ filename: "one.md", title: "One" }];
+  const prompts: string[] = [];
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => lessons,
+    activeLesson: null,
+    createPiSession: async () => ({ ...session(), prompt: async (prompt: string) => { prompts.push(prompt); } }),
+  });
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  lessons = [];
+  await bot.handleUpdate(callbackUpdate(1, "summary:one.md") as any);
+
+  assert.deepEqual(prompts, []);
+  assert.equal(userStates.get(1)?.pendingLesson, "one.md");
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
+  assert.ok(calls.some(({ method }) => method === "answerCallbackQuery"));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text === "Esa lección ya no está disponible."));
 });
 
 test("back clears the pending lesson and stale starts cannot activate another or deleted lesson", async () => {

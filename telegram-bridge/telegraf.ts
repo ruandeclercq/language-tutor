@@ -316,14 +316,8 @@ export function createBridgeBot(options: BridgeOptions) {
   function lessonActions(filename: string) {
     return Markup.inlineKeyboard([
       [Markup.button.callback("Empezar", `start:${filename}`)],
+      [Markup.button.callback("Ver resumen de la lección", `summary:${filename}`)],
       [Markup.button.callback("Ver 5 frases útiles", `prepare:${filename}`)],
-      [Markup.button.callback("Volver", `back:${filename}`)],
-    ]);
-  }
-
-  function startActions(filename: string) {
-    return Markup.inlineKeyboard([
-      [Markup.button.callback("Empezar", `start:${filename}`)],
       [Markup.button.callback("Volver", `back:${filename}`)],
     ]);
   }
@@ -511,7 +505,7 @@ export function createBridgeBot(options: BridgeOptions) {
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
             response || "Pi no devolvió ninguna respuesta de texto.");
           if (response) state.reviewedPhrases = [...state.reviewedPhrases ?? [], response];
-          await ctx.reply("¿Qué quieres hacer?", startActions(filename));
+          await ctx.reply("¿Qué quieres hacer?", lessonActions(filename));
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
@@ -519,6 +513,47 @@ export function createBridgeBot(options: BridgeOptions) {
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
             "No pude preparar las frases útiles.\nInténtalo otra vez.").catch(() =>
             console.error("Lesson preparation error message edit failed."));
+        },
+      },
+    });
+    if (!accepted) await ctx.reply(serviceBusyMessage);
+  });
+
+  // A review reads the selected lesson without changing the session into an active roleplay.
+  bot.action(/^summary:(.+)$/, async (ctx) => {
+    const state = getUserState(ctx.from.id);
+    await ctx.answerCbQuery();
+    if (state.processing || state.transcribing) {
+      await ctx.reply(busyMessage);
+      return;
+    }
+    const filename = ctx.match[1];
+    const lesson = await findPendingLesson(state, filename);
+    if (!lesson) {
+      await ctx.reply("Esa lección ya no está disponible.");
+      return;
+    }
+    const chatId = ctx.chat?.id;
+    if (!chatId) return;
+    const accepted = await piRequests.run({
+      userId: ctx.from.id,
+      state,
+      requestId: randomUUID(),
+      prompt: `Read lessons/${filename} and return a compact lesson review of 3500 characters or fewer. Use only material explicitly taught in the lesson. Include: the scenario and roles; key vocabulary; useful phrases with English translations; taught grammar or patterns; and all examples taught in the lesson. Do not quiz the student, initiate roleplay, or change lesson state.`,
+      callbacks: {
+        start: async () => await ctx.reply("📖 Preparando el resumen de la lección...") as any,
+        withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
+        success: async (response, placeholder) => {
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
+            response || "Pi no devolvió ninguna respuesta de texto.");
+          await ctx.reply("¿Qué quieres hacer?", lessonActions(filename));
+        },
+        failure: async (placeholder) => {
+          if (!placeholder) return;
+          console.error("Lesson summary prompt failed.");
+          await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined,
+            "No pude preparar el resumen de la lección.\nInténtalo otra vez.").catch(() =>
+            console.error("Lesson summary error message edit failed."));
         },
       },
     });
