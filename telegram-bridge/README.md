@@ -23,9 +23,11 @@ Create a local `.env` file:
 
 ```env
 TELEGRAM_BOT_TOKEN=your-bot-token
+HAIMAKER_API_KEY=your-haimaker-api-key
 ```
 
-The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` is
+The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` and
+`HAIMAKER_API_KEY` are
 loaded from this local `.env` file unless it is already provided by the
 process environment. Keep the token secret and do not commit `.env`.
 
@@ -128,16 +130,20 @@ per-chat command-menu state are removed during the 24-hour idle cleanup.
 - `/register` starts the access request flow for an unapproved user. Approved
   users are told that they already have access.
 
-Any other text message requires a lesson selection. If none has been selected,
-the bot shows the lesson picker instead of sending the message to Pi. The first
-approved interaction from a user also sends the welcome message.
+Any other text message or voice note requires a lesson selection. If none has
+been selected, the bot shows the lesson picker instead of sending the message
+to Pi. The first approved interaction from a user also sends the welcome
+message. Voice notes are downloaded only into memory, transcribed by Haimaker's
+`openai/gpt-4o-mini-transcribe` model, then handled exactly like text. The bot
+does not force a transcription language. Voice notes are limited to five
+minutes and 20 MB; audio is not retained after the request.
 
 ## Request behavior
 
 While Pi is processing a request, the bridge sends a placeholder and refreshes
 Telegram's typing indicator every four seconds. Each user can have at most one
-active Pi-backed request; a second text message, `/start`, `/lesson`, or lesson
-button callback receives a busy response. A session reset triggered by `/start`
+active request; a second text message, voice note, `/start`, `/lesson`, or
+lesson button callback receives a busy response. A session reset triggered by `/start`
 uses the same per-user busy guard but does not consume a global Pi request slot.
 Across all users, at most 10 Pi-backed requests run concurrently. An 11th
 request is immediately rejected with a service-busy response rather than

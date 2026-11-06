@@ -26,6 +26,19 @@ function messageUpdate(id: number, text: string) {
   };
 }
 
+function voiceUpdate(id: number, { duration = 10, fileSize = 100 }: { duration?: number; fileSize?: number } = {}) {
+  return {
+    update_id: id,
+    message: {
+      message_id: id,
+      date: 0,
+      voice: { file_id: `voice-${id}`, file_unique_id: `unique-${id}`, duration, file_size: fileSize },
+      from: { id, is_bot: false, first_name: "Test" },
+      chat: { id, type: "private" as const },
+    },
+  };
+}
+
 function lessonUpdate(id: number, filename: string) {
   return {
     update_id: id,
@@ -326,6 +339,117 @@ test("ordinary text requires a lesson selection before reaching Pi", async () =>
   assert.equal(prompts, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
     payload.text.includes("Choose a lesson before chatting")));
+});
+
+test("voice notes are transcribed and use the ordinary Pi request path", async () => {
+  const prompts: string[] = [];
+  let downloaded = 0;
+  const { bot, userStates, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    downloadVoice: async () => { downloaded += 1; return new Blob(["audio"]); },
+    transcribeVoice: async () => "hola desde voz",
+    createPiSession: async () => ({ ...session(), prompt: async (prompt: string) => { prompts.push(prompt); } }),
+    selectedLesson: "one.md",
+  });
+
+  await bot.handleUpdate(voiceUpdate(1) as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.equal(downloaded, 1);
+  assert.deepEqual(prompts, ["hola desde voz"]);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("Transcribing")));
+  assert.ok(calls.some(({ method, payload }) => method === "editMessageText" &&
+    payload.text === "🎙️ Heard: hola desde voz"));
+});
+
+test("voice notes reject oversized duration and size before download", async () => {
+  let downloaded = 0;
+  const { bot, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    downloadVoice: async () => { downloaded += 1; return new Blob(); },
+    transcribeVoice: async () => "hola",
+    createPiSession: async () => session(),
+    selectedLesson: "one.md",
+  });
+
+  await bot.handleUpdate(voiceUpdate(1, { duration: 301 }) as any);
+  const oversized = voiceUpdate(2, { fileSize: 20 * 1024 * 1024 + 1 });
+  oversized.message.from.id = 1;
+  oversized.message.chat.id = 1;
+  await bot.handleUpdate(oversized as any);
+
+  assert.equal(downloaded, 0);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("five minutes")));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("20 MB")));
+});
+
+test("voice notes report missing transcription configuration", async () => {
+  const previousKey = process.env.HAIMAKER_API_KEY;
+  delete process.env.HAIMAKER_API_KEY;
+  try {
+    const { bot, calls } = testBot({
+      token: "test-token",
+      loadAllowedUsers: async () => approvedUser(1),
+      getLessons: async () => [{ filename: "one.md", title: "One" }],
+      createPiSession: async () => session(),
+      selectedLesson: "one.md",
+    });
+
+    await bot.handleUpdate(voiceUpdate(1) as any);
+
+    assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+      payload.text.includes("HAIMAKER_API_KEY")));
+  } finally {
+    if (previousKey === undefined) delete process.env.HAIMAKER_API_KEY;
+    else process.env.HAIMAKER_API_KEY = previousKey;
+  }
+});
+
+test("in-flight transcription prevents a concurrent text request", async () => {
+  const transcription = deferred();
+  const { bot, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    downloadVoice: async () => new Blob(["audio"]),
+    transcribeVoice: async () => { await transcription.promise; return "hola"; },
+    createPiSession: async () => session(),
+    selectedLesson: "one.md",
+  });
+
+  const voice = bot.handleUpdate(voiceUpdate(1) as any);
+  await tick();
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("still working")));
+  transcription.resolve();
+  await voice;
+});
+
+test("voice notes share the per-user busy guard", async () => {
+  let downloaded = 0;
+  const finish = deferred();
+  const { bot, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    downloadVoice: async () => { downloaded += 1; return new Blob(); },
+    transcribeVoice: async () => "hola",
+    createPiSession: async () => ({ ...session(), prompt: async () => { await finish.promise; } }),
+    selectedLesson: "one.md",
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+  await tick();
+  await bot.handleUpdate(voiceUpdate(1) as any);
+
+  assert.equal(downloaded, 0);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text.includes("still working")));
+  finish.resolve();
 });
 
 test("/start clears the selected lesson and requires a new choice", async () => {

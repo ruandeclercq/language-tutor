@@ -22,6 +22,8 @@ const accessRequestsPath = path.join(dataDirectory, "access-requests.jsonl");
 export const readOnlyPiTools = ["read", "grep", "find", "ls"] as const;
 const idleSessionMs = 24 * 60 * 60 * 1000;
 const debugContentPreviewLength = 500;
+const maxVoiceDurationSeconds = 5 * 60;
+const maxVoiceFileSizeBytes = 20 * 1024 * 1024;
 
 type PiSession = Pick<Awaited<ReturnType<typeof createAgentSession>>["session"],
   "isStreaming" | "abort" | "dispose" | "prompt" | "subscribe">;
@@ -39,7 +41,7 @@ export async function appendRegistrationRequest(filePath: string, request: Regis
   await appendFile(filePath, `${JSON.stringify(request)}\n`, "utf8");
 }
 
-type BridgeOptions = {
+export type BridgeOptions = {
   token: string;
   loadAllowedUsers?: () => Promise<Map<number, AllowedUser>>;
   getLessons?: () => Promise<Array<{ filename: string; title: string }>>;
@@ -47,6 +49,8 @@ type BridgeOptions = {
   recordRegistration?: (request: RegistrationRequest) => Promise<void>;
   now?: () => number;
   debugLogContent?: boolean;
+  downloadVoice?: (fileId: string) => Promise<Blob>;
+  transcribeVoice?: (audio: Blob) => Promise<string>;
 };
 
 export function createBridgeBot(options: BridgeOptions) {
@@ -95,6 +99,42 @@ export function createBridgeBot(options: BridgeOptions) {
   }
 
   const findAllowedUsers = options.loadAllowedUsers ?? loadAllowedUsers;
+
+  async function downloadVoice(fileId: string): Promise<Blob> {
+    const url = await bot.telegram.getFileLink(fileId);
+    const response = await fetch(url.href);
+    if (!response.ok) {
+      throw new Error(`Telegram voice download failed: ${response.status}`);
+    }
+    return new Blob([await response.arrayBuffer()]);
+  }
+
+  async function transcribeVoice(audio: Blob): Promise<string> {
+    const apiKey = process.env.HAIMAKER_API_KEY;
+    if (!apiKey) {
+      throw new Error("HAIMAKER_API_KEY is not set");
+    }
+    const form = new FormData();
+    form.set("model", "openai/gpt-4o-mini-transcribe");
+    form.set("file", audio, "voice.ogg");
+    const response = await fetch("https://api.haimaker.ai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}` },
+      body: form,
+    });
+    if (!response.ok) {
+      throw new Error(`Voice transcription failed: ${response.status}`);
+    }
+    const result: unknown = await response.json();
+    if (typeof result !== "object" || result === null ||
+      typeof (result as { text?: unknown }).text !== "string") {
+      throw new Error("Voice transcription returned an invalid response");
+    }
+    return (result as { text: string }).text.trim();
+  }
+
+  const fetchVoice = options.downloadVoice ?? downloadVoice;
+  const createTranscript = options.transcribeVoice ?? transcribeVoice;
 
   async function recordRegistration(ctx: { from?: { id: number; username?: string }; }, name: string) {
     const request: RegistrationRequest = {
@@ -148,6 +188,7 @@ export function createBridgeBot(options: BridgeOptions) {
     selectedLesson?: string;
     pendingPrompt: Promise<void>;
     processing: boolean;
+    transcribing?: boolean;
     welcomed: boolean;
     lastActivityAt: number;
     discardWhenIdle?: boolean;
@@ -185,7 +226,7 @@ export function createBridgeBot(options: BridgeOptions) {
   function cleanupIdleUsers() {
     const cutoff = now() - idleSessionMs;
     for (const [userId, state] of userStates) {
-      if (!state.processing && state.lastActivityAt <= cutoff) {
+      if (!state.processing && !state.transcribing && state.lastActivityAt <= cutoff) {
         disposeUserState(userId, state);
       }
     }
@@ -206,7 +247,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   // Acquisition is synchronous so two updates cannot observe the same available slot.
   function acquirePiRequest(state: UserState): boolean {
-    if (state.processing || activePiRequests >= maxActivePiRequests) {
+    if (state.processing || state.transcribing || activePiRequests >= maxActivePiRequests) {
       return false;
     }
     state.processing = true;
@@ -248,7 +289,7 @@ export function createBridgeBot(options: BridgeOptions) {
     } finally {
       state.processing = false;
       state.pendingPrompt = Promise.resolve();
-      if (state.discardWhenIdle) {
+      if (state.discardWhenIdle && !state.processing) {
         disposeUserState(userId, state);
       }
     }
@@ -349,7 +390,7 @@ export function createBridgeBot(options: BridgeOptions) {
     if (!approved) {
       const state = userStates.get(ctx.from.id);
       if (state) {
-        if (state.processing) {
+        if (state.processing || state.transcribing) {
           state.discardWhenIdle = true;
         } else {
           disposeUserState(ctx.from.id, state);
@@ -423,7 +464,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   bot.start(async (ctx) => {
     const state = getUserState(ctx.from.id);
-    if (state.processing) {
+    if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
@@ -445,7 +486,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   bot.command("lesson", async (ctx) => {
     const state = getUserState(ctx.from.id);
-    if (state.processing) {
+    if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
@@ -461,7 +502,7 @@ export function createBridgeBot(options: BridgeOptions) {
   bot.action(/^lesson:(.+)$/, async (ctx) => {
     const state = getUserState(ctx.from.id);
     await ctx.answerCbQuery();
-    if (state.processing) {
+    if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
@@ -520,12 +561,9 @@ export function createBridgeBot(options: BridgeOptions) {
     });
   });
 
-  bot.on(message("text"), async (ctx) => {
-    if (ctx.message.text.trim().startsWith("/")) {
-      return;
-    }
+  async function handleUserText(ctx: any, text: string) {
     const state = getUserState(ctx.from.id);
-    if (state.processing) {
+    if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
@@ -539,7 +577,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
 
-    if (state.processing) {
+    if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
@@ -549,7 +587,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     const requestId = randomUUID();
-    logRequest(ctx.from.id, requestId, "started", { prompt: ctx.message.text });
+    logRequest(ctx.from.id, requestId, "started", { prompt: text });
     let placeholder;
     try {
       placeholder = await ctx.reply("🤔 Thinking...");
@@ -560,7 +598,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     const prompt = ctx.persistentChatAction("typing", async () => {
-      const response = await promptPi(await getSession(state), ctx.message.text);
+      const response = await promptPi(await getSession(state), text);
       const reply = response || "Pi returned no text response.";
       await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
       logRequest(ctx.from.id, requestId, "succeeded", { response });
@@ -583,7 +621,84 @@ export function createBridgeBot(options: BridgeOptions) {
     }).finally(() => {
       releasePiRequest(ctx.from.id, state);
     });
+  }
 
+  bot.on(message("text"), async (ctx) => {
+    if (ctx.message.text.trim().startsWith("/")) {
+      return;
+    }
+    await handleUserText(ctx, ctx.message.text);
+  });
+
+  bot.on(message("voice"), async (ctx) => {
+    const voice = ctx.message.voice;
+    const state = getUserState(ctx.from.id);
+    if (state.processing || state.transcribing) {
+      await ctx.reply(busyMessage);
+      return;
+    }
+    if (voice.duration > maxVoiceDurationSeconds) {
+      await ctx.reply("Voice notes must be five minutes or shorter.");
+      return;
+    }
+    if (voice.file_size !== undefined && voice.file_size > maxVoiceFileSizeBytes) {
+      await ctx.reply("Voice notes must be 20 MB or smaller.");
+      return;
+    }
+    if (!state.selectedLesson) {
+      if (!state.welcomed) {
+        state.welcomed = true;
+        await ctx.reply(welcomeMessage);
+      }
+      await showLessonPicker(ctx);
+      return;
+    }
+    if (!process.env.HAIMAKER_API_KEY && !options.transcribeVoice) {
+      await ctx.reply("Voice transcription is not configured. Please ask the bot owner to set HAIMAKER_API_KEY.");
+      return;
+    }
+
+    state.transcribing = true;
+    try {
+      const transcribingMessage = await ctx.reply("🎙️ Transcribing...");
+      let audio: Blob;
+      try {
+        audio = await fetchVoice(voice.file_id);
+      } catch (error) {
+        console.error("Voice download failed.", error);
+        await ctx.reply("Sorry, I couldn't download that voice note. Please try again or send text instead.");
+        return;
+      }
+      if (audio.size > maxVoiceFileSizeBytes) {
+        await ctx.reply("Voice notes must be 20 MB or smaller.");
+        return;
+      }
+      let transcript: string;
+      try {
+        transcript = await createTranscript(audio);
+      } catch (error) {
+        console.error("Voice transcription failed.", error);
+        await ctx.reply("Sorry, I couldn't transcribe that voice note. Please try again or send text instead.");
+        return;
+      }
+      if (!transcript) {
+        await ctx.reply("I couldn't hear any speech in that voice note. Please try again or send text instead.");
+        return;
+      }
+      await ctx.telegram.editMessageText(
+        ctx.chat.id,
+        transcribingMessage.message_id,
+        undefined,
+        `🎙️ Heard: ${transcript.slice(0, 3_500)}`,
+      ).catch(() => console.error("Transcript message edit failed."));
+      state.transcribing = false;
+      await handleUserText(ctx, transcript);
+    } finally {
+      state.transcribing = false;
+      if (state.discardWhenIdle && !state.processing) {
+        disposeUserState(ctx.from.id, state);
+      }
+    }
   });
 
   return {
