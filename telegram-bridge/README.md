@@ -24,12 +24,31 @@ Create a local `.env` file:
 ```env
 TELEGRAM_BOT_TOKEN=your-bot-token
 HAIMAKER_API_KEY=your-haimaker-api-key
+POSTHOG_API_KEY=
+# Set POSTHOG_HOST only to override the EU default:
+# POSTHOG_HOST=https://eu.i.posthog.com
 ```
 
 The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` and
 `HAIMAKER_API_KEY` are
 loaded from this local `.env` file unless it is already provided by the
 process environment. Keep the token secret and do not commit `.env`.
+
+Product analytics use the `posthog-node` npm dependency, installed by `npm
+install` after pulling these changes. Analytics are enabled only when
+`POSTHOG_API_KEY` is set. The default PostHog ingestion host is EU Cloud at
+`https://eu.i.posthog.com`; set `POSTHOG_HOST` only to override it. The bridge
+sends explicit lesson-funnel and feature-use events with the Telegram numeric
+user ID as the distinct ID. It does not send names, usernames, chats, message
+text, voice transcripts, Pi prompts or responses, error events, session
+recordings, or autocaptured events.
+
+Captured events and safe properties are: `bot_started`,
+`registration_started`, and `registration_submitted` (no properties);
+`lesson_picker_shown` (`reason`); `lesson_selected`, `lesson_started`, and
+`lesson_completed` (`lesson_filename`); `lesson_action_selected` (`action`);
+and `learner_message_submitted` (`input_type`). Properties never contain
+learner-authored content.
 
 ## Repository layout
 

@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import test from "node:test";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { appendRegistrationRequest, createBridgeBot, readOnlyPiTools } from "../telegraf.js";
+import { appendRegistrationRequest, createBridgeBot, createPostHogAnalytics, readOnlyPiTools } from "../telegraf.js";
 
 const approvedUser = (id: number) => new Map([[id, {
   telegramUserId: id,
@@ -255,6 +255,7 @@ test("group updates are ignored before allowlist, Pi, and reply handling", async
 
 test("unapproved registration sanitizes and records a request without initializing Pi", async () => {
   const requests: Array<{ telegramUserId: number; username: string | null; name: string }> = [];
+  const events: Array<{ userId: number; event: string; properties?: Record<string, string> }> = [];
   let sessions = 0;
   const { bot, calls } = testBot({
     token: "test-token",
@@ -262,6 +263,10 @@ test("unapproved registration sanitizes and records a request without initializi
     getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => { sessions += 1; return session(); },
     recordRegistration: async (request) => { requests.push(request); },
+    analytics: {
+      capture: (userId, event, properties) => { events.push({ userId, event, properties }); },
+      shutdown: async () => {},
+    },
   });
 
   await bot.handleUpdate(messageUpdate(9, "/register") as any);
@@ -275,6 +280,30 @@ test("unapproved registration sanitizes and records a request without initializi
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
     payload.text.includes("Solicitud registrada")));
   assert.equal(sessions, 0);
+  assert.deepEqual(events, [
+    { userId: 9, event: "registration_started", properties: undefined },
+    { userId: 9, event: "registration_submitted", properties: undefined },
+  ]);
+  assert.equal(JSON.stringify(events).includes("Ana Maria"), false);
+});
+
+test("does not capture registration events for denied or invalid requests", async () => {
+  const events: Array<{ event: string }> = [];
+  const { bot } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => new Map(),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    analytics: {
+      capture: (_userId, event) => { events.push({ event }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(messageUpdate(9, "unrequested registration text") as any);
+  await bot.handleUpdate(messageUpdate(9, "/register") as any);
+  await bot.handleUpdate(messageUpdate(9, "   ") as any);
+
+  assert.deepEqual(events, [{ event: "registration_started" }]);
 });
 
 test("selecting a lesson shows its launch screen without starting Pi", async () => {
@@ -482,6 +511,27 @@ test("lesson failures reply when the placeholder cannot be edited", async () => 
 
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
     payload.text.includes("No pude iniciar la lección")));
+});
+
+test("failed lesson starts do not emit lesson_started", async () => {
+  const events: Array<{ event: string }> = [];
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => ({ ...session(), prompt: async () => { throw new Error("Pi failed"); } }),
+    activeLesson: null,
+    analytics: {
+      capture: (_userId, event) => { events.push({ event }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.deepEqual(events.map(({ event }) => event), ["lesson_selected", "lesson_action_selected"]);
 });
 
 test("ordinary text requires a lesson selection before reaching Pi", async () => {
@@ -908,6 +958,127 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
     assert.equal(bridge.userStates.get(1)?.processing, false);
   } finally {
     console.info = originalInfo;
+  }
+});
+
+test("captures the lesson funnel with only safe properties", async () => {
+  const events: Array<{ userId: number; event: string; properties?: Record<string, string> }> = [];
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => session(),
+    activeLesson: null,
+    analytics: {
+      capture: (userId, event, properties) => { events.push({ userId, event, properties }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "/start") as any);
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "prepare:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  await bot.handleUpdate(callbackUpdate(1, "summary:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  await bot.handleUpdate(messageUpdate(1, "private learner text") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.deepEqual(events, [
+    { userId: 1, event: "bot_started", properties: undefined },
+    { userId: 1, event: "lesson_picker_shown", properties: { reason: "command" } },
+    { userId: 1, event: "lesson_selected", properties: { lesson_filename: "one.md" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action: "prepare" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action: "summary" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action: "start" } },
+    { userId: 1, event: "lesson_started", properties: { lesson_filename: "one.md" } },
+    { userId: 1, event: "learner_message_submitted", properties: { input_type: "text" } },
+  ]);
+  assert.equal(JSON.stringify(events).includes("private learner text"), false);
+});
+
+test("captures voice submissions and completed lessons without transcript content", async () => {
+  const events: Array<{ event: string; properties?: Record<string, string> }> = [];
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    activeLesson: "one.md",
+    downloadVoice: async () => new Blob(["audio"]),
+    transcribeVoice: async () => "private voice transcript",
+    createPiSession: async () => ({
+      ...session(),
+      subscribe: (listener: any) => {
+        queueMicrotask(() => listener({ type: "agent_end", messages: [{
+          role: "assistant", content: [{ type: "text", text: "Fin. [[LESSON_COMPLETE]]" }],
+        }] }));
+        return () => {};
+      },
+    }),
+    analytics: {
+      capture: (_userId, event, properties) => { events.push({ event, properties }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(voiceUpdate(1) as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.deepEqual(events, [
+    { event: "learner_message_submitted", properties: { input_type: "voice" } },
+    { event: "lesson_completed", properties: { lesson_filename: "one.md" } },
+    { event: "lesson_picker_shown", properties: { reason: "completion" } },
+  ]);
+  assert.equal(JSON.stringify(events).includes("private voice transcript"), false);
+});
+
+test("records first-use lesson pickers for approved learners", async () => {
+  const events: Array<{ event: string; properties?: Record<string, string> }> = [];
+  const { bot } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => session(),
+    activeLesson: null,
+    analytics: {
+      capture: (_userId, event, properties) => { events.push({ event, properties }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+
+  assert.deepEqual(events, [
+    { event: "lesson_picker_shown", properties: { reason: "first_use" } },
+  ]);
+});
+
+test("PostHog is disabled without a key and analytics failures do not block handlers", async () => {
+  const previousKey = process.env.POSTHOG_API_KEY;
+  delete process.env.POSTHOG_API_KEY;
+  try {
+    assert.equal(createPostHogAnalytics(), undefined);
+    const bridge = testBot({
+      token: "test-token",
+      loadAllowedUsers: async () => approvedUser(1),
+      getLessons: async () => [{ filename: "one.md", title: "One" }],
+      createPiSession: async () => session(),
+      analytics: {
+        capture: () => { throw new Error("PostHog unavailable"); },
+        shutdown: async () => { throw new Error("PostHog unavailable"); },
+      },
+    });
+
+    await bridge.bot.handleUpdate(messageUpdate(1, "/start") as any);
+    await bridge.shutdown();
+
+    assert.ok(bridge.calls.some(({ method, payload }) => method === "sendMessage" &&
+      payload.text.includes("¡Hola!")));
+  } finally {
+    if (previousKey === undefined) delete process.env.POSTHOG_API_KEY;
+    else process.env.POSTHOG_API_KEY = previousKey;
   }
 });
 

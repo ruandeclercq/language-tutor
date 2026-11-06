@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Markup } from "telegraf";
+import { PostHog } from "posthog-node";
 import { createAccessGate, createAllowedUsersLoader, type AllowedUser } from "./access.js";
 import { createPiRequestCoordinator, type PiRequestState } from "./pi-request.js";
 import {
@@ -25,10 +26,47 @@ const idleSessionMs = 24 * 60 * 60 * 1000;
 const debugContentPreviewLength = 500;
 const maxVoiceDurationSeconds = 5 * 60;
 const maxVoiceFileSizeBytes = 20 * 1024 * 1024;
+const posthogShutdownTimeoutMs = 1_000;
+const posthogEuHost = "https://eu.i.posthog.com";
 
 type PiSession = Pick<Awaited<ReturnType<typeof createAgentSession>>["session"],
   "isStreaming" | "abort" | "dispose" | "prompt" | "subscribe">;
 type PiTool = typeof readOnlyPiTools[number];
+type AnalyticsEvent =
+  | "bot_started"
+  | "registration_started"
+  | "registration_submitted"
+  | "lesson_picker_shown"
+  | "lesson_selected"
+  | "lesson_action_selected"
+  | "lesson_started"
+  | "lesson_completed"
+  | "learner_message_submitted";
+type AnalyticsProperties = Record<string, string>;
+
+export type ProductAnalytics = {
+  capture(userId: number, event: AnalyticsEvent, properties?: AnalyticsProperties): void;
+  shutdown(): Promise<void>;
+};
+
+export function createPostHogAnalytics(
+  apiKey = process.env.POSTHOG_API_KEY,
+  host = process.env.POSTHOG_HOST,
+): ProductAnalytics | undefined {
+  if (!apiKey) return undefined;
+
+  try {
+    const client = new PostHog(apiKey, { host: host?.trim() || posthogEuHost });
+    return {
+      capture: (userId, event, properties) => {
+        client.capture({ distinctId: String(userId), event, properties });
+      },
+      shutdown: () => client._shutdown(posthogShutdownTimeoutMs),
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 export type RegistrationRequest = {
   telegramUserId: number;
@@ -52,12 +90,31 @@ export type BridgeOptions = {
   debugLogContent?: boolean;
   downloadVoice?: (fileId: string) => Promise<Blob>;
   transcribeVoice?: (audio: Blob) => Promise<string>;
+  // Pass null to disable analytics explicitly, including in tests.
+  analytics?: ProductAnalytics | null;
 };
 
 export function createBridgeBot(options: BridgeOptions) {
   const bot = new Telegraf(options.token);
   const now = options.now ?? Date.now;
   const debugLogContent = options.debugLogContent ?? process.env.TELEGRAM_DEBUG_LOG_CONTENT === "1";
+  const analytics = options.analytics === undefined ? createPostHogAnalytics() : options.analytics ?? undefined;
+
+  function capture(userId: number, event: AnalyticsEvent, properties?: AnalyticsProperties) {
+    try {
+      analytics?.capture(userId, event, properties);
+    } catch {
+      console.error("Analytics capture failed.");
+    }
+  }
+
+  async function shutdown() {
+    try {
+      await analytics?.shutdown();
+    } catch {
+      console.error("Analytics shutdown failed.");
+    }
+  }
 
   const privateAccessMessage =
     "👋 Este bot es privado.\n\n" +
@@ -288,11 +345,14 @@ export function createBridgeBot(options: BridgeOptions) {
     return response.replace(/\s*\[\[LESSON_COMPLETE\]\]\s*/g, "\n").trim();
   }
 
-  async function showLessonPicker(ctx: { reply: (...args: any[]) => Promise<unknown> }) {
+  async function showLessonPicker(
+    ctx: { from?: { id: number }; reply: (...args: any[]) => Promise<unknown> },
+    reason?: "command" | "first_use" | "completion",
+  ) {
     const lessons = await listLessons();
     if (lessons.length === 0) {
       await ctx.reply("No hay lecciones disponibles.");
-      return;
+      return false;
     }
 
     await ctx.reply(
@@ -303,6 +363,10 @@ export function createBridgeBot(options: BridgeOptions) {
         ]),
       ),
     );
+    if (reason && ctx.from) {
+      capture(ctx.from.id, "lesson_picker_shown", { reason });
+    }
+    return true;
   }
 
   function lessonActions(filename: string) {
@@ -360,7 +424,8 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (decision.kind === "registration-prompt") {
-        await ctx.reply("¿Cómo te llamas?");
+      capture(ctx.from.id, "registration_started");
+      await ctx.reply("¿Cómo te llamas?");
       return;
     }
     if (decision.kind === "invalid-registration") {
@@ -368,6 +433,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (decision.kind === "registration-recorded") {
+      capture(ctx.from.id, "registration_submitted");
       await ctx.reply("Solicitud registrada. Escribe por WhatsApp al +27 66 118 6289 para pedir acceso.");
       return;
     }
@@ -423,8 +489,9 @@ export function createBridgeBot(options: BridgeOptions) {
       state.lessonComplete = false;
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
+      capture(ctx.from.id, "bot_started");
       await ctx.reply(welcomeMessage);
-      await showLessonPicker(ctx);
+      await showLessonPicker(ctx, "command");
     } catch {
       console.error("Session reset failed.");
       await ctx.reply("No pude iniciar una sesión nueva. Inténtalo otra vez.");
@@ -446,7 +513,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply(welcomeMessage);
     }
 
-    await showLessonPicker(ctx);
+    await showLessonPicker(ctx, "command");
   });
 
   // Selecting a lesson only prepares it; roleplay starts after confirmation.
@@ -467,6 +534,7 @@ export function createBridgeBot(options: BridgeOptions) {
     state.reviewedPhrases = [];
     state.lessonComplete = false;
     await ctx.reply(`📖 ${lesson.title}\n\n¿Qué quieres hacer?`, lessonActions(filename));
+    capture(ctx.from.id, "lesson_selected", { lesson_filename: filename });
   });
 
   bot.action(/^prepare:(.+)$/, async (ctx) => {
@@ -482,6 +550,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
+    capture(ctx.from.id, "lesson_action_selected", { action: "prepare" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     const previousPhrases = state.reviewedPhrases?.join("\n") || "None.";
@@ -525,6 +594,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
+    capture(ctx.from.id, "lesson_action_selected", { action: "summary" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     const accepted = await piRequests.run({
@@ -565,6 +635,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
+    capture(ctx.from.id, "lesson_action_selected", { action: "start" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     try {
@@ -589,7 +660,11 @@ export function createBridgeBot(options: BridgeOptions) {
         success: async (response, placeholder) => {
           const reply = consumeLessonCompletion(response, state) || "Pi no devolvió ninguna respuesta de texto.";
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lección iniciada: ${lesson.title}\n\n${reply}`);
-          if (state.lessonComplete) await showLessonPicker(ctx);
+          capture(ctx.from.id, "lesson_started", { lesson_filename: filename });
+          if (state.lessonComplete) {
+            capture(ctx.from.id, "lesson_completed", { lesson_filename: filename });
+            await showLessonPicker(ctx, "completion");
+          }
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
@@ -621,19 +696,20 @@ export function createBridgeBot(options: BridgeOptions) {
     await showLessonPicker(ctx);
   });
 
-  async function handleUserText(ctx: any, text: string) {
+  async function handleUserText(ctx: any, text: string, inputType: "text" | "voice" = "text") {
     const state = getUserState(ctx.from.id);
     if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
       return;
     }
-    if (!state.welcomed) {
+    const firstUse = !state.welcomed;
+    if (firstUse) {
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
     }
 
     if (!state.activeLesson) {
-      await showLessonPicker(ctx);
+      await showLessonPicker(ctx, firstUse ? "first_use" : undefined);
       return;
     }
 
@@ -652,9 +728,13 @@ export function createBridgeBot(options: BridgeOptions) {
         start: async () => await ctx.reply("🤔 Pensando...") as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
+          const completedLesson = state.activeLesson;
           const reply = consumeLessonCompletion(response, state) || "Pi no devolvió ninguna respuesta de texto.";
           await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
-          if (state.lessonComplete) await showLessonPicker(ctx);
+          if (state.lessonComplete && completedLesson) {
+            capture(ctx.from.id, "lesson_completed", { lesson_filename: completedLesson });
+            await showLessonPicker(ctx, "completion");
+          }
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
@@ -666,6 +746,7 @@ export function createBridgeBot(options: BridgeOptions) {
       },
     });
     if (!accepted) await ctx.reply(serviceBusyMessage);
+    else capture(ctx.from.id, "learner_message_submitted", { input_type: inputType });
   }
 
   bot.on(message("text"), async (ctx) => {
@@ -691,11 +772,12 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (!state.activeLesson) {
-      if (!state.welcomed) {
+      const firstUse = !state.welcomed;
+      if (firstUse) {
         state.welcomed = true;
         await ctx.reply(welcomeMessage);
       }
-      await showLessonPicker(ctx);
+      await showLessonPicker(ctx, firstUse ? "first_use" : undefined);
       return;
     }
     if (!process.env.HAIMAKER_API_KEY && !options.transcribeVoice) {
@@ -737,7 +819,7 @@ export function createBridgeBot(options: BridgeOptions) {
         `🎙️ He oído: ${transcript.slice(0, 3_500)}`,
       ).catch(() => console.error("Transcript message edit failed."));
       state.transcribing = false;
-      await handleUserText(ctx, transcript);
+      await handleUserText(ctx, transcript, "voice");
     } finally {
       state.transcribing = false;
       if (state.discardWhenIdle && !state.processing) {
@@ -751,6 +833,7 @@ export function createBridgeBot(options: BridgeOptions) {
     userStates,
     cleanupIdleUsers,
     getActivePiRequests: piRequests.getActive,
+    shutdown,
   };
 }
 
@@ -759,6 +842,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (!token) {
     throw new Error("TELEGRAM_BOT_TOKEN is not set");
   }
-  const { bot } = createBridgeBot({ token });
-  await bot.launch();
+  const bridge = createBridgeBot({ token });
+  let shuttingDown = false;
+  const stop = async (signal: "SIGINT" | "SIGTERM") => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    try {
+      bridge.bot.stop(signal);
+    } catch {
+      console.error("Telegram shutdown failed.");
+    }
+    await bridge.shutdown();
+  };
+  process.once("SIGINT", () => void stop("SIGINT"));
+  process.once("SIGTERM", () => void stop("SIGTERM"));
+  await bridge.bot.launch();
 }
