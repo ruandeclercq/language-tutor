@@ -32,3 +32,11 @@ test("roleplay steering scenario rejects lesson explanations", () => {
     "A reply left roleplay to explain the lesson instead.",
   ]);
 });
+
+test("roleplay feedback scenario requires a score and completion marker", () => {
+  const scenario = scenarios.find(({ name }) => name === "roleplay-feedback");
+  assert.ok(scenario);
+  assert.deepEqual(scenario.check(["Puntuación: 4/5"]), [
+    "The completed roleplay did not include the completion marker.",
+  ]);
+});

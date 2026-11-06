@@ -139,7 +139,6 @@ The round ends only after the customer has successfully ordered one drink and tw
 
 Completing the first round does not complete the lesson. Immediately switch roles and complete the second round. The lesson ends only after both rounds are complete.
 
-
 # Challenge
 
 The student should be able to:

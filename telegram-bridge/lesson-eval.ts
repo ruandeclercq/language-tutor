@@ -69,6 +69,28 @@ export const scenarios: Scenario[] = [
       return failures;
     },
   },
+  {
+    name: "roleplay-feedback",
+    description: "Complete both rounds and receive a score before the lesson ends.",
+    studentTurns: [
+      "Una cerveza, una tortilla y queso, por favor.",
+      "Entonces, croquetas, por favor.",
+      "Hola. ¿Qué le puedo ofrecer?",
+      "Lo siento. No hay tortilla.",
+      "Enseguida.",
+    ],
+    check: (replies) => {
+      const failures = basicChecks(replies);
+      const finalReply = replies.at(-1) ?? "";
+      if (!/puntuaci[oó]n:\s*[1-5]\/5/i.test(finalReply)) {
+        failures.push("The completed roleplay did not include a score out of 5.");
+      }
+      if (!finalReply.includes("[[LESSON_COMPLETE]]")) {
+        failures.push("The completed roleplay did not include the completion marker.");
+      }
+      return failures;
+    },
+  },
 ];
 
 async function runScenario(lesson: string, scenario: Scenario) {
