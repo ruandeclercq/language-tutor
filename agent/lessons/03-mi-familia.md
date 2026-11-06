@@ -1,9 +1,8 @@
 ---
-title: "Lección 3: Mi familia"
-lesson_id: "leccion-3-mi-familia"
-language: "Spanish"
-level: "Beginner"
-practice_type: "conversation and role-play"
+id: mi-familia
+title: Mi familia
+level: A1
+estimated_duration: 30min
 ---
 
 # Lección 3: Mi familia
@@ -19,7 +18,7 @@ By the end of this lesson, the learner can:
 - Use **mi**, **tu**, and **su**.
 - Use masculine and feminine adjective agreement.
 
-## Family vocabulary
+## Family and pets vocabulary
 
 | Spanish | English |
 |---|---|
@@ -27,6 +26,8 @@ By the end of this lesson, the learner can:
 | padre | father |
 | hermano | brother |
 | hermana | sister |
+| hijo | son |
+| hija | daughter |
 | padrastro | stepfather |
 | madrastra | stepmother |
 | hermanastro | stepbrother |
@@ -48,6 +49,8 @@ By the end of this lesson, the learner can:
 | pareja | partner |
 | amigo | male friend |
 | amiga | female friend |
+| mascota | pet |
+| perro | dog |
 
 ## Describing people
 
@@ -88,6 +91,11 @@ By the end of this lesson, the learner can:
 | nosotros | tenemos |
 | ellos / ellas | tienen |
 
+Examples:
+
+- **Ana tiene una hermana.**
+- **Tenemos un perro.**
+
 ### Possessive adjectives
 
 | English | Spanish |
@@ -119,6 +127,14 @@ By the end of this lesson, the learner can:
 - **Tiene...**  
   He / she has...
 
+- **No tiene mascotas.**
+  He / she does not have pets.
+- **No tengo...**
+  I do not have...
+
+- **Vive...**
+  He / she lives...
+
 ## Useful questions
 
 - **¿Quién es?**  
@@ -132,6 +148,12 @@ By the end of this lesson, the learner can:
 
 - **¿Tiene mascotas?**  
   Does he / she have pets?
+- **¿Cuántos hermanos tienes?**
+  How many siblings do you have?
+- **¿Cómo se llama tu madre?**
+  What is your mother's name?
+- **¿Cómo se llama tu padre?**
+  What is your father's name?
 
 ## Example description
 
@@ -159,35 +181,16 @@ This is my mother. Her name is Susan. She is tall, dark-haired, and very friendl
 
 **Ana:** Tengo una hermana. Se llama Marta. Es inteligente y amable.
 
-## Speaking challenge
-
-Introduce one important person in your life.
-
-Include:
-
-- Who the person is.
-- Their name.
-- What they are like.
-- Whether they have pets.
-
-Use questions such as:
-
-- **¿Quién es?**
-- **¿Cómo se llama?**
-- **¿Cómo es?**
-- **¿Tiene mascotas?**
-
 # Roleplay
 
-### Scenario
+## Round 1
 
-The learner and the bot are classmates talking about important people in their lives.
+The tutor asks the student about one family member, friend, or partner.
 
-### Round 1
+Choose one relationship at random from the vocabulary. Do not always begin
+with `¿Tienes hermanos?`; start with a question about the chosen relationship.
 
-The bot asks the learner about one family member, friend, or partner.
-
-The learner should practise:
+The student should practise:
 
 - **Este es... / Esta es...**
 - **Se llama...**
@@ -195,24 +198,29 @@ The learner should practise:
 - **Tiene...**
 - **Tengo...**
 
-The bot should naturally ask:
+The tutor asks:
 
 - **¿Quién es?**
 - **¿Cómo se llama?**
 - **¿Cómo es?**
 - **¿Tiene mascotas?**
 
-Round 1 ends only after the learner has said who the person is, given their
+Round 1 ends only after the student has said who the person is, given their
 name, described them, and said whether they have pets. Then immediately
 switch roles and begin Round 2.
 
-### Round 2
+## Round 2
 
 The roles switch.
 
-The bot introduces a fictional family member or friend. The learner asks questions about that person.
+The tutor introduces a fictional family member or friend. The student asks
+questions about that person.
 
-The bot should answer using only vocabulary and grammar from this lesson.
+The tutor answers using only vocabulary and grammar from this lesson.
 
-Round 2 ends only after the learner has asked all four questions and the bot
+For each roleplay, invent different details. Vary the person's relationship,
+name, description, siblings, and pets using only material from this lesson.
+For pets, use either `Tiene un perro.` or `No tiene mascotas.`
+
+Round 2 ends only after the student has asked all four questions and the tutor
 has answered them. Only then is the roleplay complete.
