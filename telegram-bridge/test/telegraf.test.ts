@@ -291,6 +291,39 @@ test("unapproved registration sanitizes and records a request without initializi
   assert.equal(JSON.stringify(events).includes("Ana Maria"), false);
 });
 
+test("promo approval captures a user_signed_up event", async () => {
+  const previousCode = process.env.REGISTRATION_PROMO_CODE;
+  process.env.REGISTRATION_PROMO_CODE = "HOLA-MARYANNE";
+  const events: Array<{ event: string; properties?: Record<string, string | number> }> = [];
+  const approved: any[] = [];
+  try {
+    const { bot } = testBot({
+      token: "test-token",
+      loadAllowedUsers: async () => new Map(),
+      getLessons: async () => [],
+      activeLesson: null,
+      approveUser: async (user) => { approved.push(user); },
+      analytics: {
+        capture: (_userId, event, properties) => { events.push({ event, properties }); },
+        shutdown: async () => {},
+      },
+    });
+
+    await bot.handleUpdate(messageUpdate(9, "hello") as any);
+    await bot.handleUpdate(messageUpdate(9, "yes") as any);
+    await bot.handleUpdate(messageUpdate(9, "hola-maryanne") as any);
+
+    assert.equal(approved.length, 1);
+    assert.deepEqual(events, [
+      { event: "registration_started", properties: undefined },
+      { event: "user_signed_up", properties: { signup_method: "promo_code" } },
+    ]);
+  } finally {
+    if (previousCode === undefined) delete process.env.REGISTRATION_PROMO_CODE;
+    else process.env.REGISTRATION_PROMO_CODE = previousCode;
+  }
+});
+
 test("captures onboarding start but not invalid registration replies", async () => {
   const events: Array<{ event: string }> = [];
   const { bot } = testBot({

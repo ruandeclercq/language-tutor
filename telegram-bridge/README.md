@@ -45,15 +45,27 @@ user ID as the distinct ID. It does not send names, usernames, chats, message
 text, voice transcripts, Pi prompts or responses, error events, session
 recordings, or autocaptured events.
 
-Captured events and safe properties are: `bot_started`,
-`registration_started`, and `registration_submitted` (no properties);
-`lesson_picker_shown` (`reason`); `lesson_selected` and `lesson_started`
-(`lesson_filename`); `lesson_completed` (`lesson_filename`,
-`duration_seconds`, `message_count`); `lesson_action_selected`
-(`action_type`); and `learner_message_submitted` (`input_type`,
-`response_time_ms`, plus `input_length` for text or `voice_file_size_bytes`
-for voice notes). Properties never contain learner-authored content, voice
-transcripts, prompts, or responses.
+Captured events and their safe properties are:
+
+- `bot_started` - no properties.
+- `registration_started` - no properties.
+- `registration_submitted` - no properties.
+- `user_signed_up` - `signup_method`: `promo_code`.
+- `lesson_picker_shown` - `reason`: `command`, `first_use`, or `completion`.
+- `lesson_selected` - `lesson_filename`: selected Markdown lesson filename.
+- `lesson_action_selected` - `action_type`: `prepare`, `summary`, or `start`.
+- `lesson_started` - `lesson_filename`: started Markdown lesson filename.
+- `lesson_completed` - `lesson_filename`; `duration_seconds`: non-negative
+  whole seconds; `message_count`: non-negative accepted learner replies.
+- `learner_message_submitted` - `input_type`: `text` or `voice`;
+  `response_time_ms`: non-negative learner turnaround time when available;
+  `input_length`: non-negative Unicode character count for text; or
+  `voice_file_size_bytes`: declared voice-note size when available.
+
+Properties never contain learner-authored content, voice transcripts, prompts,
+or responses. `user_signed_up` currently covers immediate promo-code access;
+manual approvals happen in the separate approval CLI and are not captured by
+the bot's PostHog integration.
 
 ## Repository layout
 

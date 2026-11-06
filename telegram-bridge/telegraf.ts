@@ -37,6 +37,7 @@ type AnalyticsEvent =
   | "bot_started"
   | "registration_started"
   | "registration_submitted"
+  | "user_signed_up"
   | "lesson_picker_shown"
   | "lesson_selected"
   | "lesson_action_selected"
@@ -87,6 +88,7 @@ export type BridgeOptions = {
   getLessons?: () => Promise<Array<{ filename: string; title: string }>>;
   createPiSession?: (tools: readonly PiTool[]) => Promise<PiSession>;
   recordRegistration?: (request: RegistrationRequest) => Promise<void>;
+  approveUser?: (user: AllowedUser) => Promise<void>;
   now?: () => number;
   debugLogContent?: boolean;
   downloadVoice?: (fileId: string) => Promise<Blob>;
@@ -125,7 +127,7 @@ export function createBridgeBot(options: BridgeOptions) {
     now,
     recordRegistration: options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)),
     promoCode: process.env.REGISTRATION_PROMO_CODE,
-    approveUser: async (user) => { await approveUser(allowedUsersPath, user, async () => {}); },
+    approveUser: options.approveUser ?? (async (user) => { await approveUser(allowedUsersPath, user, async () => {}); }),
   });
 
   async function downloadVoice(fileId: string): Promise<Blob> {
@@ -469,6 +471,7 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
     if (decision.kind === "promo-approved") {
+      capture(ctx.from.id, "user_signed_up", { signup_method: "promo_code" });
       await ctx.reply("Acceso concedido. Envía /start para comenzar.");
       return;
     }
