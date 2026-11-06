@@ -77,6 +77,12 @@ Means:
 
 > My name is María.
 
+Also:
+
+```
+Soy Maria.
+```
+
 ---
 
 ## Saying where you're from
