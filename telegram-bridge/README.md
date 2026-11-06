@@ -69,6 +69,12 @@ Run the test suite with:
 npm test
 ```
 
+Run the live lesson evaluation with the configured Pi model and API key:
+
+```sh
+npm run lesson-eval
+```
+
 Type-check the bridge and tests with:
 
 ```sh
@@ -137,6 +143,10 @@ message. Voice notes are downloaded only into memory, transcribed by Haimaker's
 `openai/gpt-4o-mini-transcribe` model, then handled exactly like text. The bot
 does not force a transcription language. Voice notes are limited to five
 minutes and 20 MB; audio is not retained after the request.
+When Pi marks a lesson complete, the bridge removes the marker, shows the final
+response, opens the lesson picker, and will not send subsequent messages to Pi
+until the user selects another lesson. `/start` and selecting a lesson reset
+the completion state.
 
 ## Request behavior
 

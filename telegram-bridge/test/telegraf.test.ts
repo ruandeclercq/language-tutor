@@ -341,6 +341,63 @@ test("ordinary text requires a lesson selection before reaching Pi", async () =>
     payload.text.includes("Choose a lesson before chatting")));
 });
 
+test("lesson completion marker is hidden and opens the picker", async () => {
+  let prompts = 0;
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => ({
+      ...session(),
+      prompt: async () => { prompts += 1; },
+      subscribe: (listener: any) => {
+        queueMicrotask(() => listener({ type: "agent_end", messages: [{
+          role: "assistant", content: [{ type: "text", text: "Fin. [[LESSON_COMPLETE]]" }],
+        }] }));
+        return () => {};
+      },
+    }),
+    selectedLesson: "one.md",
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "terminamos") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.equal(prompts, 1);
+  assert.equal(userStates.get(1)?.selectedLesson, undefined);
+  assert.equal(userStates.get(1)?.lessonComplete, true);
+  assert.ok(calls.some(({ method, payload }) => method === "editMessageText" &&
+    payload.text === "Fin."));
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("Choose a lesson before chatting")));
+
+  await bot.handleUpdate(messageUpdate(2, "hola") as any);
+  assert.equal(prompts, 1);
+});
+
+test("/start and lesson selection clear completion state", async () => {
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    createPiSession: async () => session(),
+    selectedLesson: "one.md",
+  });
+  userStates.set(1, {
+    lessonComplete: true,
+    selectedLesson: "one.md",
+    pendingPrompt: Promise.resolve(),
+    processing: false,
+    welcomed: true,
+    lastActivityAt: Date.now(),
+  });
+
+  await bot.handleUpdate(messageUpdate(1, "/start") as any);
+  assert.equal(userStates.get(1)?.lessonComplete, false);
+  await bot.handleUpdate(lessonUpdate(2, "one.md") as any);
+  assert.equal(userStates.get(1)?.lessonComplete, false);
+});
+
 test("voice notes are transcribed and use the ordinary Pi request path", async () => {
   const prompts: string[] = [];
   let downloaded = 0;

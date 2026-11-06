@@ -146,6 +146,7 @@ export function createBridgeBot(options: BridgeOptions) {
   const sessionFactory = options.createPiSession ?? createPiSession;
   type UserState = PiRequestState & {
     selectedLesson?: string;
+    lessonComplete?: boolean;
     transcribing?: boolean;
     welcomed: boolean;
     lastActivityAt: number;
@@ -286,6 +287,13 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const listLessons = options.getLessons ?? getLessons;
 
+  function consumeLessonCompletion(response: string, state: UserState) {
+    if (!response.includes("[[LESSON_COMPLETE]]")) return response;
+    state.lessonComplete = true;
+    state.selectedLesson = undefined;
+    return response.replace(/\s*\[\[LESSON_COMPLETE\]\]\s*/g, "\n").trim();
+  }
+
   async function showLessonPicker(ctx: { reply: (...args: any[]) => Promise<unknown> }) {
     const lessons = await listLessons();
     if (lessons.length === 0) {
@@ -402,6 +410,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
     try {
       state.selectedLesson = undefined;
+      state.lessonComplete = false;
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
@@ -451,6 +460,7 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     state.selectedLesson = filename;
+    state.lessonComplete = false;
 
     const requestId = randomUUID();
     const lessonPrompt = `/skill:lesson Start the lesson from lessons/${filename}.`;
@@ -463,8 +473,9 @@ export function createBridgeBot(options: BridgeOptions) {
         start: async () => await ctx.reply(`📖 Starting lesson: ${lesson.title}...`) as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
-          const reply = response || "Pi returned no text response.";
+          const reply = consumeLessonCompletion(response, state) || "Pi returned no text response.";
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lesson started: ${lesson.title}\n\n${reply}`);
+          if (state.lessonComplete) await showLessonPicker(ctx);
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
@@ -511,7 +522,9 @@ export function createBridgeBot(options: BridgeOptions) {
         start: async () => await ctx.reply("🤔 Thinking...") as any,
         withTyping: async (work) => { let result = ""; await ctx.persistentChatAction("typing", async () => { result = await work(); }); return result; },
         success: async (response, placeholder) => {
-          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, response || "Pi returned no text response.");
+          const reply = consumeLessonCompletion(response, state) || "Pi returned no text response.";
+          await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
+          if (state.lessonComplete) await showLessonPicker(ctx);
         },
         failure: async (placeholder) => {
           if (!placeholder) return;
