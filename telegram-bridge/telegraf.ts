@@ -1,13 +1,13 @@
 import "dotenv/config";
-import { appendFile, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Telegraf } from "telegraf";
 import { message } from "telegraf/filters";
 import { Markup } from "telegraf";
-import { parseAllowedUsers, sanitizeName, type AllowedUser } from "./access.js";
-import { createPiRequestCoordinator } from "./pi-request.js";
+import { createAccessGate, createAllowedUsersLoader, type AllowedUser } from "./access.js";
+import { createPiRequestCoordinator, type PiRequestState } from "./pi-request.js";
 import {
   AuthStorage,
   createAgentSession,
@@ -62,42 +62,14 @@ export function createBridgeBot(options: BridgeOptions) {
   const privateAccessMessage =
     "👋 This bot is currently available by invitation.\n\n" +
     "Use /register to request access, and I’ll review your request shortly.";
-  const registrationExpiryMs = 10 * 60 * 1000;
-  const pendingRegistrations = new Map<number, number>();
   const busyMessage = "⏳ I'm still working on your previous request.\nPlease wait for it to finish.";
   const serviceBusyMessage = "The service is busy. Please try again shortly.";
-  let cachedAllowedUsers: Map<number, AllowedUser> | undefined;
-  let cachedAllowedUsersMtimeMs: number | null | undefined;
-
-  async function loadAllowedUsers(): Promise<Map<number, AllowedUser>> {
-    let mtimeMs: number;
-    try {
-      ({ mtimeMs } = await stat(allowedUsersPath));
-    } catch {
-      console.error("Allowlist unavailable; denying access.");
-      cachedAllowedUsers = new Map();
-      cachedAllowedUsersMtimeMs = null;
-      return cachedAllowedUsers;
-    }
-
-    if (cachedAllowedUsers !== undefined && cachedAllowedUsersMtimeMs === mtimeMs) {
-      return cachedAllowedUsers;
-    }
-
-    try {
-      const parsed: unknown = JSON.parse(await readFile(allowedUsersPath, "utf8"));
-      cachedAllowedUsers = parseAllowedUsers(parsed);
-      cachedAllowedUsersMtimeMs = mtimeMs;
-      return cachedAllowedUsers;
-    } catch {
-      console.error("Allowlist unavailable; denying access.");
-      cachedAllowedUsers = new Map();
-      cachedAllowedUsersMtimeMs = mtimeMs;
-      return cachedAllowedUsers;
-    }
-  }
-
-  const findAllowedUsers = options.loadAllowedUsers ?? loadAllowedUsers;
+  const findAllowedUsers = options.loadAllowedUsers ?? createAllowedUsersLoader(allowedUsersPath);
+  const accessGate = createAccessGate({
+    loadAllowedUsers: findAllowedUsers,
+    now,
+    recordRegistration: options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)),
+  });
 
   async function downloadVoice(fileId: string): Promise<Blob> {
     const url = await bot.telegram.getFileLink(fileId);
@@ -134,16 +106,6 @@ export function createBridgeBot(options: BridgeOptions) {
 
   const fetchVoice = options.downloadVoice ?? downloadVoice;
   const createTranscript = options.transcribeVoice ?? transcribeVoice;
-
-  async function recordRegistration(ctx: { from?: { id: number; username?: string }; }, name: string) {
-    const request: RegistrationRequest = {
-      telegramUserId: ctx.from!.id,
-      username: ctx.from!.username ?? null,
-      name,
-      requestedAt: new Date().toISOString(),
-    };
-    await (options.recordRegistration ?? ((entry) => appendRegistrationRequest(accessRequestsPath, entry)))(request);
-  }
 
   // Content previews are opt-in and bounded so normal operational logs stay private and compact.
   const contentPreview = (content: string) => content
@@ -182,15 +144,11 @@ export function createBridgeBot(options: BridgeOptions) {
     }).then(({ session }) => session);
 
   const sessionFactory = options.createPiSession ?? createPiSession;
-  type UserState = {
-    session?: PiSession;
+  type UserState = PiRequestState & {
     selectedLesson?: string;
-    pendingPrompt: Promise<void>;
-    processing: boolean;
     transcribing?: boolean;
     welcomed: boolean;
     lastActivityAt: number;
-    discardWhenIdle?: boolean;
   };
 
   const userStates = new Map<number, UserState>();
@@ -210,7 +168,7 @@ export function createBridgeBot(options: BridgeOptions) {
     return state;
   }
 
-  function disposeUserState(userId: number, state: UserState) {
+  function disposeUserState(userId: number, state: PiRequestState) {
     if (userStates.get(userId) !== state) {
       return;
     }
@@ -224,14 +182,10 @@ export function createBridgeBot(options: BridgeOptions) {
 
   function cleanupIdleUsers() {
     const cutoff = now() - idleSessionMs;
+    accessGate.cleanupExpired();
     for (const [userId, state] of userStates) {
       if (!state.processing && !state.transcribing && state.lastActivityAt <= cutoff) {
         disposeUserState(userId, state);
-      }
-    }
-    for (const [userId, pendingUntil] of pendingRegistrations) {
-      if (pendingUntil <= now()) {
-        pendingRegistrations.delete(userId);
       }
     }
     for (const [userId, configuration] of configuredCommandMenus) {
@@ -303,7 +257,7 @@ export function createBridgeBot(options: BridgeOptions) {
     createSession: () => sessionFactory(readOnlyPiTools),
     promptSession: promptPi,
     log: logRequest,
-    disposeState: (userId, state) => disposeUserState(userId, state as UserState),
+    disposeState: disposeUserState,
   });
 
   const welcomeMessage = `👋 Welcome!
@@ -359,9 +313,14 @@ export function createBridgeBot(options: BridgeOptions) {
       return;
     }
 
-    const allowedUsers = await findAllowedUsers();
-    const approved = allowedUsers.has(ctx.from.id);
     const text = ctx.message && "text" in ctx.message ? ctx.message.text : undefined;
+    const decision = await accessGate.decide({
+      userId: ctx.from.id,
+      username: ctx.from.username,
+      text,
+      registerCommand: isCommand(text, "register"),
+    });
+    const approved = decision.kind === "approved" || decision.kind === "already-approved";
 
     // Telegram command scopes are per chat, so tutoring commands are only shown
     // after an approved user sends an update. Authorization below remains the
