@@ -47,10 +47,13 @@ recordings, or autocaptured events.
 
 Captured events and safe properties are: `bot_started`,
 `registration_started`, and `registration_submitted` (no properties);
-`lesson_picker_shown` (`reason`); `lesson_selected`, `lesson_started`, and
-`lesson_completed` (`lesson_filename`); `lesson_action_selected` (`action`);
-and `learner_message_submitted` (`input_type`). Properties never contain
-learner-authored content.
+`lesson_picker_shown` (`reason`); `lesson_selected` and `lesson_started`
+(`lesson_filename`); `lesson_completed` (`lesson_filename`,
+`duration_seconds`, `message_count`); `lesson_action_selected`
+(`action_type`); and `learner_message_submitted` (`input_type`,
+`response_time_ms`, plus `input_length` for text or `voice_file_size_bytes`
+for voice notes). Properties never contain learner-authored content, voice
+transcripts, prompts, or responses.
 
 ## Repository layout
 

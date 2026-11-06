@@ -43,7 +43,7 @@ type AnalyticsEvent =
   | "lesson_started"
   | "lesson_completed"
   | "learner_message_submitted";
-type AnalyticsProperties = Record<string, string>;
+type AnalyticsProperties = Record<string, string | number>;
 
 export type ProductAnalytics = {
   capture(userId: number, event: AnalyticsEvent, properties?: AnalyticsProperties): void;
@@ -206,6 +206,9 @@ export function createBridgeBot(options: BridgeOptions) {
     activeLesson?: string;
     reviewedPhrases?: string[];
     lessonComplete?: boolean;
+    lessonStartedAt?: number;
+    lessonMessageCount?: number;
+    lastTutorMessageAt?: number;
     transcribing?: boolean;
     welcomed: boolean;
     lastActivityAt: number;
@@ -343,6 +346,22 @@ export function createBridgeBot(options: BridgeOptions) {
     state.lessonComplete = true;
     state.activeLesson = undefined;
     return response.replace(/\s*\[\[LESSON_COMPLETE\]\]\s*/g, "\n").trim();
+  }
+
+  function resetLessonMetrics(state: UserState) {
+    state.lessonStartedAt = undefined;
+    state.lessonMessageCount = undefined;
+    state.lastTutorMessageAt = undefined;
+  }
+
+  function captureLessonCompleted(userId: number, filename: string, state: UserState) {
+    const properties: AnalyticsProperties = { lesson_filename: filename };
+    if (state.lessonStartedAt !== undefined) {
+      properties.duration_seconds = Math.max(0, Math.floor((now() - state.lessonStartedAt) / 1_000));
+      properties.message_count = state.lessonMessageCount ?? 0;
+    }
+    capture(userId, "lesson_completed", properties);
+    resetLessonMetrics(state);
   }
 
   async function showLessonPicker(
@@ -503,6 +522,7 @@ export function createBridgeBot(options: BridgeOptions) {
       state.activeLesson = undefined;
       state.reviewedPhrases = undefined;
       state.lessonComplete = false;
+      resetLessonMetrics(state);
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
       capture(ctx.from.id, "bot_started");
@@ -566,7 +586,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
-    capture(ctx.from.id, "lesson_action_selected", { action: "prepare" });
+    capture(ctx.from.id, "lesson_action_selected", { action_type: "prepare" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     const previousPhrases = state.reviewedPhrases?.join("\n") || "None.";
@@ -610,7 +630,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
-    capture(ctx.from.id, "lesson_action_selected", { action: "summary" });
+    capture(ctx.from.id, "lesson_action_selected", { action_type: "summary" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     const accepted = await piRequests.run({
@@ -651,7 +671,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await ctx.reply("Esa lección ya no está disponible.");
       return;
     }
-    capture(ctx.from.id, "lesson_action_selected", { action: "start" });
+    capture(ctx.from.id, "lesson_action_selected", { action_type: "start" });
     const chatId = ctx.chat?.id;
     if (!chatId) return;
     try {
@@ -665,6 +685,9 @@ export function createBridgeBot(options: BridgeOptions) {
     state.pendingLesson = undefined;
     state.reviewedPhrases = undefined;
     state.lessonComplete = false;
+    state.lessonStartedAt = now();
+    state.lessonMessageCount = 0;
+    state.lastTutorMessageAt = undefined;
     const accepted = await piRequests.run({
       userId: ctx.from.id,
       state,
@@ -678,8 +701,10 @@ export function createBridgeBot(options: BridgeOptions) {
           await ctx.telegram.editMessageText(chatId, placeholder.message_id, undefined, `📖 Lección iniciada: ${lesson.title}\n\n${reply}`);
           capture(ctx.from.id, "lesson_started", { lesson_filename: filename });
           if (state.lessonComplete) {
-            capture(ctx.from.id, "lesson_completed", { lesson_filename: filename });
+            captureLessonCompleted(ctx.from.id, filename, state);
             await showLessonPicker(ctx, "completion");
+          } else {
+            state.lastTutorMessageAt = now();
           }
         },
         failure: async (placeholder) => {
@@ -712,7 +737,13 @@ export function createBridgeBot(options: BridgeOptions) {
     await showLessonPicker(ctx);
   });
 
-  async function handleUserText(ctx: any, text: string, inputType: "text" | "voice" = "text") {
+  async function handleUserText(
+    ctx: any,
+    text: string,
+    inputType: "text" | "voice" = "text",
+    receivedAt = now(),
+    voiceFileSize?: number,
+  ) {
     const state = getUserState(ctx.from.id);
     if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
@@ -735,6 +766,9 @@ export function createBridgeBot(options: BridgeOptions) {
     }
 
     const requestId = randomUUID();
+    const responseTimeMs = state.lastTutorMessageAt === undefined
+      ? undefined
+      : Math.max(0, receivedAt - state.lastTutorMessageAt);
     const accepted = await piRequests.run({
       userId: ctx.from.id,
       state,
@@ -748,8 +782,10 @@ export function createBridgeBot(options: BridgeOptions) {
           const reply = consumeLessonCompletion(response, state) || "Pi no devolvió ninguna respuesta de texto.";
           await ctx.telegram.editMessageText(ctx.chat.id, placeholder.message_id, undefined, reply);
           if (state.lessonComplete && completedLesson) {
-            capture(ctx.from.id, "lesson_completed", { lesson_filename: completedLesson });
+            captureLessonCompleted(ctx.from.id, completedLesson, state);
             await showLessonPicker(ctx, "completion");
+          } else {
+            state.lastTutorMessageAt = now();
           }
         },
         failure: async (placeholder) => {
@@ -762,7 +798,14 @@ export function createBridgeBot(options: BridgeOptions) {
       },
     });
     if (!accepted) await ctx.reply(serviceBusyMessage);
-    else capture(ctx.from.id, "learner_message_submitted", { input_type: inputType });
+    else {
+      state.lessonMessageCount = (state.lessonMessageCount ?? 0) + 1;
+      const properties: AnalyticsProperties = { input_type: inputType };
+      if (responseTimeMs !== undefined) properties.response_time_ms = responseTimeMs;
+      if (inputType === "text") properties.input_length = Array.from(text).length;
+      else if (voiceFileSize !== undefined) properties.voice_file_size_bytes = voiceFileSize;
+      capture(ctx.from.id, "learner_message_submitted", properties);
+    }
   }
 
   bot.on(message("text"), async (ctx) => {
@@ -774,6 +817,7 @@ export function createBridgeBot(options: BridgeOptions) {
 
   bot.on(message("voice"), async (ctx) => {
     const voice = ctx.message.voice;
+    const receivedAt = now();
     const state = getUserState(ctx.from.id);
     if (state.processing || state.transcribing) {
       await ctx.reply(busyMessage);
@@ -835,7 +879,7 @@ export function createBridgeBot(options: BridgeOptions) {
         `🎙️ He oído: ${transcript.slice(0, 3_500)}`,
       ).catch(() => console.error("Transcript message edit failed."));
       state.transcribing = false;
-      await handleUserText(ctx, transcript, "voice");
+      await handleUserText(ctx, transcript, "voice", receivedAt, voice.file_size);
     } finally {
       state.transcribing = false;
       if (state.discardWhenIdle && !state.processing) {

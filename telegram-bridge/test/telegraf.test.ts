@@ -255,7 +255,7 @@ test("group updates are ignored before allowlist, Pi, and reply handling", async
 
 test("unapproved registration sanitizes and records a request without initializing Pi", async () => {
   const requests: Array<{ telegramUserId: number; username: string | null; name: string }> = [];
-  const events: Array<{ userId: number; event: string; properties?: Record<string, string> }> = [];
+  const events: Array<{ userId: number; event: string; properties?: Record<string, string | number> }> = [];
   let sessions = 0;
   const { bot, calls } = testBot({
     token: "test-token",
@@ -966,13 +966,15 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
 });
 
 test("captures the lesson funnel with only safe properties", async () => {
-  const events: Array<{ userId: number; event: string; properties?: Record<string, string> }> = [];
+  let now = 0;
+  const events: Array<{ userId: number; event: string; properties?: Record<string, string | number> }> = [];
   const { bot, userStates } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
     getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => session(),
     activeLesson: null,
+    now: () => now,
     analytics: {
       capture: (userId, event, properties) => { events.push({ userId, event, properties }); },
       shutdown: async () => {},
@@ -987,6 +989,7 @@ test("captures the lesson funnel with only safe properties", async () => {
   await userStates.get(1)?.pendingPrompt;
   await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
   await userStates.get(1)?.pendingPrompt;
+  now = 2_500;
   await bot.handleUpdate(messageUpdate(1, "private learner text") as any);
   await userStates.get(1)?.pendingPrompt;
 
@@ -994,17 +997,17 @@ test("captures the lesson funnel with only safe properties", async () => {
     { userId: 1, event: "bot_started", properties: undefined },
     { userId: 1, event: "lesson_picker_shown", properties: { reason: "command" } },
     { userId: 1, event: "lesson_selected", properties: { lesson_filename: "one.md" } },
-    { userId: 1, event: "lesson_action_selected", properties: { action: "prepare" } },
-    { userId: 1, event: "lesson_action_selected", properties: { action: "summary" } },
-    { userId: 1, event: "lesson_action_selected", properties: { action: "start" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action_type: "prepare" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action_type: "summary" } },
+    { userId: 1, event: "lesson_action_selected", properties: { action_type: "start" } },
     { userId: 1, event: "lesson_started", properties: { lesson_filename: "one.md" } },
-    { userId: 1, event: "learner_message_submitted", properties: { input_type: "text" } },
+    { userId: 1, event: "learner_message_submitted", properties: { input_type: "text", response_time_ms: 2_500, input_length: 20 } },
   ]);
   assert.equal(JSON.stringify(events).includes("private learner text"), false);
 });
 
 test("captures voice submissions and completed lessons without transcript content", async () => {
-  const events: Array<{ event: string; properties?: Record<string, string> }> = [];
+  const events: Array<{ event: string; properties?: Record<string, string | number> }> = [];
   const { bot, userStates } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
@@ -1031,15 +1034,59 @@ test("captures voice submissions and completed lessons without transcript conten
   await userStates.get(1)?.pendingPrompt;
 
   assert.deepEqual(events, [
-    { event: "learner_message_submitted", properties: { input_type: "voice" } },
+    { event: "learner_message_submitted", properties: { input_type: "voice", voice_file_size_bytes: 100 } },
     { event: "lesson_completed", properties: { lesson_filename: "one.md" } },
     { event: "lesson_picker_shown", properties: { reason: "completion" } },
   ]);
   assert.equal(JSON.stringify(events).includes("private voice transcript"), false);
 });
 
+test("records lesson duration and accepted reply count on completion", async () => {
+  let now = 0;
+  let listener: ((event: any) => void) | undefined;
+  let promptCount = 0;
+  const events: Array<{ event: string; properties?: Record<string, string | number> }> = [];
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    now: () => now,
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    activeLesson: null,
+    createPiSession: async () => ({
+      ...session(),
+      prompt: async () => {
+        promptCount += 1;
+        if (promptCount === 2) now = 7_500;
+        queueMicrotask(() => listener?.({ type: "agent_end", messages: [{
+          role: "assistant",
+          content: [{ type: "text", text: promptCount === 2 ? "Fin. [[LESSON_COMPLETE]]" : "Hola" }],
+        }] }));
+      },
+      subscribe: (next: any) => { listener = next; return () => { listener = undefined; }; },
+    }),
+    analytics: {
+      capture: (_userId, event, properties) => { events.push({ event, properties }); },
+      shutdown: async () => {},
+    },
+  });
+
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+  now = 2_500;
+  await bot.handleUpdate(messageUpdate(1, "hola") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.deepEqual(events.filter(({ event }) => event === "learner_message_submitted" || event === "lesson_completed"), [
+    { event: "learner_message_submitted", properties: { input_type: "text", response_time_ms: 2_500, input_length: 4 } },
+    { event: "lesson_completed", properties: { lesson_filename: "one.md", duration_seconds: 7, message_count: 1 } },
+  ]);
+  assert.equal(userStates.get(1)?.lessonStartedAt, undefined);
+  assert.equal(userStates.get(1)?.lastTutorMessageAt, undefined);
+});
+
 test("records first-use lesson pickers for approved learners", async () => {
-  const events: Array<{ event: string; properties?: Record<string, string> }> = [];
+  const events: Array<{ event: string; properties?: Record<string, string | number> }> = [];
   const { bot } = testBot({
     token: "test-token",
     loadAllowedUsers: async () => approvedUser(1),
