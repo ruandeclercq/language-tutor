@@ -339,31 +339,21 @@ export function createBridgeBot(options: BridgeOptions) {
       }
     }
 
-    if (isCommand(text, "register")) {
-      if (approved) {
+    if (decision.kind === "already-approved") {
         await ctx.reply("You already have access.");
-      } else {
-        pendingRegistrations.set(ctx.from.id, now() + registrationExpiryMs);
-        await ctx.reply("What is your name?");
-      }
       return;
     }
-
-    const pendingUntil = pendingRegistrations.get(ctx.from.id);
-    if (pendingUntil !== undefined) {
-      if (pendingUntil <= now()) {
-        pendingRegistrations.delete(ctx.from.id);
-      } else if (typeof text === "string" && !text.trim().startsWith("/")) {
-        const name = sanitizeName(text);
-        if (!name) {
-          await ctx.reply("Please provide a valid name (up to 100 characters).");
-          return;
-        }
-        await recordRegistration(ctx, name);
-        pendingRegistrations.delete(ctx.from.id);
-        await ctx.reply("Your access request has been recorded. Please WhatsApp me on +27 66 118 6289 so I can approve your access.");
-        return;
-      }
+    if (decision.kind === "registration-prompt") {
+        await ctx.reply("What is your name?");
+      return;
+    }
+    if (decision.kind === "invalid-registration") {
+      await ctx.reply("Please provide a valid name (up to 100 characters).");
+      return;
+    }
+    if (decision.kind === "registration-recorded") {
+      await ctx.reply("Your access request has been recorded. Please WhatsApp me on +27 66 118 6289 so I can approve your access.");
+      return;
     }
 
     if (!approved) {
@@ -415,6 +405,7 @@ export function createBridgeBot(options: BridgeOptions) {
       await resetSession(ctx.from.id, state);
       state.welcomed = true;
       await ctx.reply(welcomeMessage);
+      await showLessonPicker(ctx);
     } catch {
       console.error("Session reset failed.");
       await ctx.reply("Sorry, I couldn't start a fresh session. Please try again.");
