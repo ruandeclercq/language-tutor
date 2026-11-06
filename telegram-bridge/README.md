@@ -31,6 +31,27 @@ The bridge imports `dotenv/config` at startup, so `TELEGRAM_BOT_TOKEN` and
 loaded from this local `.env` file unless it is already provided by the
 process environment. Keep the token secret and do not commit `.env`.
 
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `telegraf.ts` | Telegram handlers and bridge lifecycle |
+| `lesson-session.ts` | Pi session creation and prompt wrapper |
+| `lesson-repl.ts` | Interactive lesson runner |
+| `lesson-eval.ts` | Automated live lesson scenarios |
+| `test/` | Bridge and lesson-evaluation tests |
+| `../agent/.pi/SYSTEM.md` | Pi's tutor behavior prompt |
+| `../agent/.pi/models.json` | Pi provider, model list, and default model |
+| `../agent/.pi/settings.json` | Pi runtime settings and default model |
+| `../agent/lessons/` | Markdown lesson files loaded by `/lesson` |
+| `../agent/.pi/skills/lesson/SKILL.md` | Lesson and roleplay mechanics |
+
+Pi model selection is configured in both `.pi/models.json` and
+`.pi/settings.json`; keep their `defaultModel` values aligned. The current
+default is `z-ai/glm-4.6` through Haimaker. The bridge does not set a separate
+reasoning level; Pi uses the model/provider default unless one is selected in
+the Pi client.
+
 To temporarily include bounded prompt and response previews in Pi request
 lifecycle logs, add this to `.env` and restart the bridge:
 
@@ -73,6 +94,12 @@ Run the live lesson evaluation with the configured Pi model and API key:
 
 ```sh
 npm run lesson-eval
+```
+
+Run an interactive lesson session:
+
+```sh
+npm run lesson-repl -- 02-tapas-bar.md
 ```
 
 Type-check the bridge and tests with:

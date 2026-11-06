@@ -23,7 +23,7 @@ The bridge does not own:
   `AuthStorage` and `ModelRegistry`.
 - Lesson authoring. Lessons are read from the sibling `../agent/lessons/`
   directory.
-- Manual approval decisions. An operator edits the allowlist directly.
+- Manual approval decisions. An operator runs `npm run approve-user`.
 - Persistent conversation history. Pi sessions disappear when the process
   exits.
 
