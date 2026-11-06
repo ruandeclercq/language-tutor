@@ -1,7 +1,7 @@
 ---
 
 name: lesson
-description: Use for language lessons and practice with provided material.
+description: Use for active language-lesson roleplay and practice with provided material, not lesson preparation.
 ---
 
 The lesson defines the student's current knowledge and today's material.

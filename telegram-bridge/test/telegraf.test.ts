@@ -39,13 +39,13 @@ function voiceUpdate(id: number, { duration = 10, fileSize = 100 }: { duration?:
   };
 }
 
-function lessonUpdate(id: number, filename: string) {
+function callbackUpdate(id: number, data: string) {
   return {
     update_id: id,
     callback_query: {
       id: `callback-${id}`,
       from: { id, is_bot: false, first_name: "Test" },
-      data: `lesson:${filename}`,
+      data,
       message: {
         message_id: id,
         date: 0,
@@ -55,14 +55,18 @@ function lessonUpdate(id: number, filename: string) {
   };
 }
 
-function testBot(options: Parameters<typeof createBridgeBot>[0] & { selectedLesson?: string | null }) {
+function lessonUpdate(id: number, filename: string) {
+  return callbackUpdate(id, `lesson:${filename}`);
+}
+
+function testBot(options: Parameters<typeof createBridgeBot>[0] & { activeLesson?: string | null }) {
   const bridge = createBridgeBot(options);
   const handleUpdate = bridge.bot.handleUpdate.bind(bridge.bot);
   (bridge.bot as any).handleUpdate = async (update: any) => {
     const userId = update.message?.from?.id ?? update.callback_query?.from?.id;
-    if (options.selectedLesson !== null && typeof userId === "number" && !bridge.userStates.has(userId)) {
+    if (options.activeLesson !== null && typeof userId === "number" && !bridge.userStates.has(userId)) {
       bridge.userStates.set(userId, {
-        selectedLesson: options.selectedLesson ?? "one.md",
+        activeLesson: options.activeLesson ?? "one.md",
         pendingPrompt: Promise.resolve(),
         processing: false,
         welcomed: false,
@@ -273,7 +277,7 @@ test("unapproved registration sanitizes and records a request without initializi
   assert.equal(sessions, 0);
 });
 
-test("lesson callbacks use each requester's independent Pi session", async () => {
+test("selecting a lesson shows its launch screen without starting Pi", async () => {
   const prompts: Array<{ id: number; prompt: string }> = [];
   const { bot, userStates, calls } = testBot({
     token: "test-token",
@@ -282,6 +286,7 @@ test("lesson callbacks use each requester's independent Pi session", async () =>
       { filename: "one.md", title: "One" },
       { filename: "two.md", title: "Two" },
     ],
+    activeLesson: null,
     createPiSession: async () => {
       const id = prompts.length + 1;
       return { ...session(), prompt: async (prompt: string) => {
@@ -294,14 +299,96 @@ test("lesson callbacks use each requester's independent Pi session", async () =>
   await bot.handleUpdate(lessonUpdate(2, "two.md") as any);
   await tick();
 
-  assert.deepEqual(prompts, [
-    { id: 1, prompt: "/skill:lesson Start the lesson from lessons/one.md." },
-    { id: 2, prompt: "/skill:lesson Start the lesson from lessons/two.md." },
-  ]);
-  assert.notEqual(userStates.get(1)?.session, userStates.get(2)?.session);
+  assert.deepEqual(prompts, []);
+  assert.equal(userStates.get(1)?.pendingLesson, "one.md");
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
+  const launch = calls.find(({ method, payload }) => method === "sendMessage" && payload.text.includes("¿Qué quieres hacer?"));
+  assert.deepEqual(launch?.payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text),
+    ["Empezar", "Ver 5 frases útiles", "Volver"]);
   assert.ok(calls.some(({ method, payload }) => method === "setMyCommands" &&
     payload.scope.type === "chat" && payload.commands.some((command: { command: string }) => command.command === "lesson")));
+});
+
+test("start resets and starts each requester's selected lesson", async () => {
+  const prompts: Array<{ id: number; prompt: string }> = [];
+  const { bot, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => new Map([...approvedUser(1), ...approvedUser(2)]),
+    getLessons: async () => [{ filename: "one.md", title: "One" }, { filename: "two.md", title: "Two" }],
+    createPiSession: async () => {
+      const id = prompts.length + 1;
+      return { ...session(), prompt: async (prompt: string) => { prompts.push({ id, prompt }); } };
+    },
+  });
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(lessonUpdate(2, "two.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
+  await bot.handleUpdate(callbackUpdate(2, "start:two.md") as any);
   await tick();
+
+  assert.deepEqual(prompts.map(({ prompt }) => prompt), [
+    "/skill:lesson Start the lesson from lessons/one.md.",
+    "/skill:lesson Start the lesson from lessons/two.md.",
+  ]);
+  assert.equal(userStates.get(1)?.activeLesson, "one.md");
+  assert.equal(userStates.get(1)?.pendingLesson, undefined);
+  assert.notEqual(userStates.get(1)?.session, userStates.get(2)?.session);
+});
+
+test("preparation uses a dedicated non-skill prompt and keeps the lesson pending", async () => {
+  const prompts: string[] = [];
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    activeLesson: null,
+    createPiSession: async () => ({
+      ...session(),
+      prompt: async (prompt: string) => { prompts.push(prompt); },
+      subscribe: (listener: any) => {
+        queueMicrotask(() => listener({ type: "agent_end", messages: [{
+          role: "assistant", content: [{ type: "text", text: "Hola — hello\nGracias — thanks\nPor favor — please\nHasta luego — goodbye\nSí — yes" }],
+        }] }));
+        return () => {};
+      },
+    }),
+  });
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "prepare:one.md") as any);
+  await userStates.get(1)?.pendingPrompt;
+
+  assert.equal(prompts.length, 1);
+  assert.equal(prompts[0].includes("/skill:lesson"), false);
+  assert.match(prompts[0], /exactly five short scenario-relevant phrases/);
+  assert.equal(userStates.get(1)?.pendingLesson, "one.md");
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" && payload.text === "¿Qué quieres hacer?" &&
+    payload.reply_markup.inline_keyboard.map((row: any[]) => row[0].text).join(",") === "Empezar,Volver"));
+});
+
+test("back clears the pending lesson and stale starts cannot activate another or deleted lesson", async () => {
+  let lessons = [{ filename: "one.md", title: "One" }, { filename: "two.md", title: "Two" }];
+  const prompts: string[] = [];
+  const { bot, calls, userStates } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => lessons,
+    activeLesson: null,
+    createPiSession: async () => ({ ...session(), prompt: async (prompt: string) => { prompts.push(prompt); } }),
+  });
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "start:two.md") as any);
+  lessons = [];
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
+  assert.deepEqual(prompts, []);
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
+
+  lessons = [{ filename: "one.md", title: "One" }];
+  await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "back:one.md") as any);
+  assert.equal(userStates.get(1)?.pendingLesson, undefined);
+  assert.ok(calls.filter(({ method, payload }) => method === "sendMessage" && payload.text.includes("Elige una lección:")).length >= 1);
+  assert.ok(calls.filter(({ method }) => method === "answerCallbackQuery").length >= 5);
 });
 
 test("lesson failures reply when the placeholder cannot be edited", async () => {
@@ -318,6 +405,7 @@ test("lesson failures reply when the placeholder cannot be edited", async () => 
   };
 
   await bot.handleUpdate(lessonUpdate(1, "one.md") as any);
+  await bot.handleUpdate(callbackUpdate(1, "start:one.md") as any);
   await userStates.get(1)?.pendingPrompt;
 
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
@@ -331,12 +419,30 @@ test("ordinary text requires a lesson selection before reaching Pi", async () =>
     loadAllowedUsers: async () => approvedUser(1),
     getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => ({ ...session(), prompt: async () => { prompts += 1; } }),
-    selectedLesson: null,
+    activeLesson: null,
   });
 
   await bot.handleUpdate(messageUpdate(1, "hola") as any);
 
   assert.equal(prompts, 0);
+  assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
+    payload.text.includes("Elige una lección:")));
+});
+
+test("voice without an active lesson opens the picker without transcription", async () => {
+  let downloaded = 0;
+  const { bot, calls } = testBot({
+    token: "test-token",
+    loadAllowedUsers: async () => approvedUser(1),
+    getLessons: async () => [{ filename: "one.md", title: "One" }],
+    activeLesson: null,
+    downloadVoice: async () => { downloaded += 1; return new Blob(["audio"]); },
+    transcribeVoice: async () => "hola",
+    createPiSession: async () => session(),
+  });
+  await bot.handleUpdate(voiceUpdate(1) as any);
+
+  assert.equal(downloaded, 0);
   assert.ok(calls.some(({ method, payload }) => method === "sendMessage" &&
     payload.text.includes("Elige una lección:")));
 });
@@ -357,14 +463,14 @@ test("lesson completion marker is hidden and opens the picker", async () => {
         return () => {};
       },
     }),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
 
   await bot.handleUpdate(messageUpdate(1, "terminamos") as any);
   await userStates.get(1)?.pendingPrompt;
 
   assert.equal(prompts, 1);
-  assert.equal(userStates.get(1)?.selectedLesson, undefined);
+  assert.equal(userStates.get(1)?.activeLesson, undefined);
   assert.equal(userStates.get(1)?.lessonComplete, true);
   assert.ok(calls.some(({ method, payload }) => method === "editMessageText" &&
     payload.text === "Fin."));
@@ -381,11 +487,11 @@ test("/start and lesson selection clear completion state", async () => {
     loadAllowedUsers: async () => approvedUser(1),
     getLessons: async () => [{ filename: "one.md", title: "One" }],
     createPiSession: async () => session(),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
   userStates.set(1, {
     lessonComplete: true,
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
     pendingPrompt: Promise.resolve(),
     processing: false,
     welcomed: true,
@@ -408,7 +514,7 @@ test("voice notes are transcribed and use the ordinary Pi request path", async (
     downloadVoice: async () => { downloaded += 1; return new Blob(["audio"]); },
     transcribeVoice: async () => "hola desde voz",
     createPiSession: async () => ({ ...session(), prompt: async (prompt: string) => { prompts.push(prompt); } }),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
 
   await bot.handleUpdate(voiceUpdate(1) as any);
@@ -430,7 +536,7 @@ test("voice notes reject oversized duration and size before download", async () 
     downloadVoice: async () => { downloaded += 1; return new Blob(); },
     transcribeVoice: async () => "hola",
     createPiSession: async () => session(),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
 
   await bot.handleUpdate(voiceUpdate(1, { duration: 301 }) as any);
@@ -453,7 +559,7 @@ test("voice notes report missing transcription configuration", async () => {
       loadAllowedUsers: async () => approvedUser(1),
       getLessons: async () => [{ filename: "one.md", title: "One" }],
       createPiSession: async () => session(),
-      selectedLesson: "one.md",
+      activeLesson: "one.md",
     });
 
     await bot.handleUpdate(voiceUpdate(1) as any);
@@ -475,7 +581,7 @@ test("in-flight transcription prevents a concurrent text request", async () => {
     downloadVoice: async () => new Blob(["audio"]),
     transcribeVoice: async () => { await transcription.promise; return "hola"; },
     createPiSession: async () => session(),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
 
   const voice = bot.handleUpdate(voiceUpdate(1) as any);
@@ -497,7 +603,7 @@ test("voice notes share the per-user busy guard", async () => {
     downloadVoice: async () => { downloaded += 1; return new Blob(); },
     transcribeVoice: async () => "hola",
     createPiSession: async () => ({ ...session(), prompt: async () => { await finish.promise; } }),
-    selectedLesson: "one.md",
+    activeLesson: "one.md",
   });
 
   await bot.handleUpdate(messageUpdate(1, "hola") as any);
@@ -709,7 +815,7 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
       createPiSession: async () => session(),
     });
     bridge.userStates.set(1, {
-      selectedLesson: "one.md",
+      activeLesson: "one.md",
       processing: false,
       pendingPrompt: Promise.resolve(),
       welcomed: true,
