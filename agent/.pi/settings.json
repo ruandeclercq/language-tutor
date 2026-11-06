@@ -3,6 +3,7 @@
   "theme": "dark",
   "defaultProvider": "haimaker",
   "defaultModel": "z-ai/glm-4.6",
+  "_defaultModel": "qwen/qwen3.6-flash",
   "packages": [
     "git:github.com/badlogic/pi-telegram"
   ]

@@ -6,6 +6,8 @@
   "main": "index.js",
   "scripts": {
     "approve-user": "tsx approve-user.ts",
+    "lesson-eval": "tsx lesson-eval.ts",
+    "lesson-repl": "tsx lesson-repl.ts",
     "test": "tsx --test test/*.test.ts"
   },
   "keywords": [],

@@ -1,6 +1,6 @@
 ---
 lesson: 1
-title: Greetings and Introductions
+title: Hola y me llamo
 level: A1
 language: Spanish
 ---

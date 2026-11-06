@@ -1,0 +1,38 @@
+{
+  "providers": {
+    "haimaker": {
+      "type": "openai",
+      "api": "openai-completions",
+      "baseUrl": "https://api.haimaker.ai/v1/",
+      "apiKeyEnv": "HAIMAKER_API_KEY",
+      "models": [
+        {
+          "id": "qwen/qwen3.6-flash",
+          "name": "qwen/qwen3.6-flash"
+        },
+        {
+          "id": "z-ai/glm-4.6",
+          "name": "GLM 4.6"
+        },
+        {
+          "id": "minimax/minimax-m3",
+          "name": "minimax-m3"
+        },
+        {
+          "id": "minimax/minimax-m2.7-highspeed",
+          "name": "minimax-m2.7-highspeed"
+        },
+        {
+          "id": "meta-llama/llama-3.3-70b",
+          "name": "Llama 3.3 70B"
+        },
+        {
+          "id": "openai/gpt-5.6-luna",
+          "name": "gpt-5.6-luna"
+        }
+      ]
+    }
+  },
+  "defaultModel": "openai/gpt-5.6-luna"
+}
+

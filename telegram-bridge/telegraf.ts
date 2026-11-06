@@ -86,7 +86,7 @@ export function createBridgeBot(options: BridgeOptions) {
       throw new Error("HAIMAKER_API_KEY is not set");
     }
     const form = new FormData();
-    form.set("model", "openai/gpt-4o-mini-transcribe");
+    form.set("model", "openai/gpt-4o-transcribe");
     form.set("file", audio, "voice.ogg");
     const response = await fetch("https://api.haimaker.ai/v1/audio/transcriptions", {
       method: "POST",
