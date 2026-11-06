@@ -177,7 +177,7 @@ export function createBridgeBot(options: BridgeOptions) {
     userId: number,
     requestId: string,
     outcome: "started" | "succeeded" | "failed",
-    content?: { prompt?: string; response?: string },
+    content?: { prompt?: string; response?: string; error?: unknown },
   ) => {
     const entry = {
       timestamp: new Date().toISOString(),
@@ -188,6 +188,11 @@ export function createBridgeBot(options: BridgeOptions) {
     } as Record<string, string | number>;
     if (debugLogContent && content?.prompt !== undefined) entry.promptPreview = contentPreview(content.prompt);
     if (debugLogContent && content?.response !== undefined) entry.responsePreview = contentPreview(content.response);
+    if (debugLogContent && content?.error !== undefined) {
+      entry.error = content.error instanceof Error
+        ? content.error.stack ?? content.error.message
+        : String(content.error);
+    }
     console.info(JSON.stringify(entry));
   };
 

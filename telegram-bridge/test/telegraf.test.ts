@@ -969,6 +969,7 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
   try {
     const bridge = testBot({
       token: "test-token",
+      debugLogContent: true,
       loadAllowedUsers: async () => approvedUser(1),
       getLessons: async () => [{ filename: "one.md", title: "One" }],
       createPiSession: async () => session(),
@@ -991,6 +992,7 @@ test("placeholder failures emit a failed terminal lifecycle entry", async () => 
     const lifecycle = entries.map((entry) => JSON.parse(entry));
     assert.deepEqual(lifecycle.map(({ outcome }) => outcome), ["started", "failed"]);
     assert.equal(lifecycle[0].requestId, lifecycle[1].requestId);
+    assert.match(lifecycle[1].error, /send failed/);
     assert.equal(bridge.getActivePiRequests(), 0);
     assert.equal(bridge.userStates.get(1)?.processing, false);
   } finally {

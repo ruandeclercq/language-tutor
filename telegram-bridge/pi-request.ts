@@ -17,7 +17,7 @@ export type PiRequestCoordinatorOptions = {
   maxActive?: number;
   createSession: () => Promise<PiRequestSession>;
   promptSession: (session: PiRequestSession, prompt: string) => Promise<string>;
-  log: (userId: number, requestId: string, outcome: "started" | "succeeded" | "failed", content?: { prompt?: string; response?: string }) => void;
+  log: (userId: number, requestId: string, outcome: "started" | "succeeded" | "failed", content?: { prompt?: string; response?: string; error?: unknown }) => void;
   disposeState?: (userId: number, state: PiRequestState) => void;
 };
 
@@ -61,7 +61,7 @@ export function createPiRequestCoordinator(options: PiRequestCoordinatorOptions)
     try {
       presentation = await args.callbacks.start();
     } catch (error) {
-      options.log(args.userId, args.requestId, "failed");
+      options.log(args.userId, args.requestId, "failed", { error });
       await args.callbacks.failure(presentation);
       release(args.userId, args.state);
       throw error;
@@ -73,8 +73,8 @@ export function createPiRequestCoordinator(options: PiRequestCoordinatorOptions)
       await args.callbacks.success(response, presentation as T);
       options.log(args.userId, args.requestId, "succeeded", { response });
     };
-    args.state.pendingPrompt = work().catch(async () => {
-      options.log(args.userId, args.requestId, "failed");
+    args.state.pendingPrompt = work().catch(async (error) => {
+      options.log(args.userId, args.requestId, "failed", { error });
       await args.callbacks.failure(presentation);
     }).finally(() => release(args.userId, args.state));
     return true;
