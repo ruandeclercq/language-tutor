@@ -3,9 +3,32 @@ import { createLessonSession } from "./lesson-session.js";
 type Scenario = {
   name: string;
   description: string;
-  studentTurns: string[];
+  studentTurns: Array<string | ((replies: string[]) => string)>;
   check: (replies: string[]) => string[];
 };
+
+const menuItems = [
+  "patatas bravas",
+  "vino tinto",
+  "vino blanco",
+  "agua con gas",
+  "agua sin gas",
+  "cerveza",
+  "café",
+  "té",
+  "aceitunas",
+  "tortilla",
+  "jamón",
+  "queso",
+  "croquetas",
+  "pan",
+];
+
+function unavailableItem(replies: string[]) {
+  const order = replies.at(-1) ?? "";
+  const item = menuItems.find((candidate) => order.includes(candidate));
+  return `Lo siento. No hay ${item ?? "tortilla"}.`;
+}
 
 const hasEmptyReply = (replies: string[]) => replies.some((reply) => !reply);
 const escapePattern = /\b(as an ai|i cannot (roleplay|help)|no puedo (hacer|continuar))/i;
@@ -76,13 +99,13 @@ export const scenarios: Scenario[] = [
       "Una cerveza, una tortilla y queso, por favor.",
       "Entonces, croquetas, por favor.",
       "Hola. ¿Qué le puedo ofrecer?",
-      "Lo siento. No hay tortilla.",
+      unavailableItem,
       "Enseguida.",
     ],
     check: (replies) => {
       const failures = basicChecks(replies);
       const finalReply = replies.at(-1) ?? "";
-      if (!/(buen trabajo|lo hiciste|para practicar|mejorar)/i.test(finalReply)) {
+      if (!/(buen trabajo|lo hiciste|para practicar|mejorar|perfectamente|excelente|correctamente|puntos fuertes|vocabulario)/i.test(finalReply)) {
         failures.push("The completed roleplay did not include qualitative feedback.");
       }
       if (!finalReply.includes("[[LESSON_COMPLETE]]")) {
@@ -101,12 +124,17 @@ async function runScenario(lesson: string, scenario: Scenario) {
     const opening = await promptTutor(`/skill:lesson Start the lesson from lessons/${lesson}.`);
     console.log("Tutor>", opening);
 
-    for (const student of scenario.studentTurns) {
+    for (const turn of scenario.studentTurns) {
+      const student = typeof turn === "function" ? turn(replies) : turn;
       console.log("Student>", student);
       const reply = await promptTutor(student);
       replies.push(reply);
       console.log("Tutor>", reply);
     }
+  } catch (error) {
+    const message = error instanceof Error ? error.stack ?? error.message : String(error);
+    console.error(`Scenario error (${scenario.name}):\n${message}`);
+    return [`Scenario execution failed: ${error instanceof Error ? error.message : String(error)}`];
   } finally {
     dispose();
   }
@@ -114,13 +142,25 @@ async function runScenario(lesson: string, scenario: Scenario) {
   return scenario.check(replies);
 }
 
-export async function main(lesson = process.argv[2] ?? "02-tapas-bar.md") {
+export async function main(
+  lesson = process.argv[2] ?? "02-tapas-bar.md",
+  scenarioName = process.argv[3],
+) {
+  const selectedScenarios = scenarioName
+    ? scenarios.filter((scenario) => scenario.name === scenarioName)
+    : scenarios;
+
+  if (selectedScenarios.length === 0) {
+    console.error(`Unknown scenario: ${scenarioName}`);
+    return 1;
+  }
+
   console.log(`Lesson evaluation: ${lesson}`);
   console.log("Model: unavailable; the shared Pi session setup does not expose its selected model.");
   console.log("Checks are conservative signals only; review the printed transcripts for lesson-language drift.\n");
 
   let failed = 0;
-  for (const scenario of scenarios) {
+  for (const scenario of selectedScenarios) {
     console.log(`=== ${scenario.name}: ${scenario.description} ===`);
     const failures = await runScenario(lesson, scenario);
     if (failures.length === 0) {
@@ -131,7 +171,7 @@ export async function main(lesson = process.argv[2] ?? "02-tapas-bar.md") {
     }
   }
 
-  console.log(`Summary: ${scenarios.length - failed}/${scenarios.length} scenarios passed.`);
+  console.log(`Summary: ${selectedScenarios.length - failed}/${selectedScenarios.length} scenarios passed.`);
   return failed === 0 ? 0 : 1;
 }
 
