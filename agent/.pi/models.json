@@ -23,6 +23,10 @@
           "name": "GLM 4.7 Flash"
         },
         {
+          "id": "z-ai/glm-5.2",
+          "name": "GLM 5.2"
+        },
+        {
           "id": "minimax/minimax-m3",
           "name": "minimax-m3"
         },
